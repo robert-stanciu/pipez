@@ -13,8 +13,20 @@ export type Tool =
   | { kind: 'service'; service: ServiceKind }
   | { kind: 'opening'; opening: 'door' | 'window' }
 
+/** Which workspace fills the middle of the screen. */
+export type Workspace = 'layout' | 'panel'
+
 export const useViewStore = defineStore('view', () => {
   const tool = ref<Tool>({ kind: 'select' })
+
+  /**
+   * The panel gets the whole screen rather than a corner of the layout. Wiring and board
+   * layout answer different questions and neither is served by sharing the space.
+   */
+  const workspace = ref<Workspace>('layout')
+  const setWorkspace = (next: Workspace) => {
+    workspace.value = next
+  }
 
   /**
    * The storey being edited. Null means "not chosen yet" and resolves to the ground floor —
@@ -57,6 +69,8 @@ export const useViewStore = defineStore('view', () => {
   return {
     tool,
     setTool,
+    workspace,
+    setWorkspace,
     resetTool,
     activeLevelId,
     setActiveLevel,

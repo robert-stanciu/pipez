@@ -24,19 +24,61 @@ export function bomCsv(project: Project, result: RoutingResult): string {
     rows.push([SYSTEM_LABEL[line.system], line.item, line.quantity, line.unit])
   }
 
+  const panel = result.panel
+  if (panel) {
+    rows.push(
+      [],
+      ['Supply', panel.supply === 'three-phase' ? '400 V 3~ + N' : '230 V 1~'],
+      ['Main switch (A)', panel.mainBreakerAmps],
+      ['Maximum demand per line (A)', panel.maximumDemand.toFixed(1)],
+      ['Line balance (A apart)', panel.imbalanceAmps.toFixed(1)],
+      ['Enclosure (modules)', `${panel.modulesUsed} of ${panel.enclosureModules}`],
+    )
+    for (const phase of ['L1', 'L2', 'L3'] as const) {
+      if (panel.supply === 'single-phase' && phase !== 'L1') continue
+      rows.push([`Load on ${phase} (A)`, panel.phaseLoad[phase].toFixed(1)])
+    }
+  }
+
   if (result.circuits.length > 0) {
-    rows.push([], ['Circuit', 'Type', 'Breaker (A)', 'Cable (mm²)', 'Outlets', 'Load (W)', 'RCD'])
-    for (const circuit of result.circuits) {
+    rows.push(
+      [],
+      [
+        'Way',
+        'Circuit',
+        'Type',
+        'Line',
+        'Poles',
+        'MCB (A)',
+        'RCD',
+        'Cores',
+        'Cable (mm²)',
+        'Length (m)',
+        'Load (W)',
+        'Design (A)',
+        'Volt drop (%)',
+        'Outlets',
+      ],
+    )
+    const ways = panel ? panel.ways.map((way) => way.circuit) : result.circuits
+    ways.forEach((circuit, index) => {
       rows.push([
+        index + 1,
         circuit.name,
         circuit.kind,
+        circuit.poles === 3 ? 'L1+L2+L3' : (circuit.phases[0] ?? '—'),
+        circuit.poles,
         circuit.breakerAmps,
+        circuit.rcdProtected ? `#${circuit.rcdGroup + 1}` : 'none',
+        circuit.cores,
         circuit.cableMm2,
-        circuit.fixtureIds.length,
+        (circuit.routeLength / 1000).toFixed(1),
         circuit.totalWatts,
-        circuit.rcdProtected ? 'yes' : 'no',
+        circuit.designCurrent.toFixed(1),
+        circuit.voltDropPercent.toFixed(2),
+        circuit.fixtureIds.length,
       ])
-    }
+    })
   }
 
   if (result.warnings.length > 0) {

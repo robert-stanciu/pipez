@@ -445,6 +445,12 @@ export const useProjectStore = defineStore('project', () => {
     touch()
   }
 
+  function updateElectrical(patch: Partial<Project['settings']['electrical']>): void {
+    checkpoint()
+    Object.assign(project.value.settings.electrical, patch)
+    touch()
+  }
+
   function updateSettings(patch: Partial<Project['settings']>): void {
     checkpoint()
     Object.assign(project.value.settings, patch)
@@ -494,6 +500,7 @@ export const useProjectStore = defineStore('project', () => {
     updateServicePoint,
     removeServicePoint,
     updateSettings,
+    updateElectrical,
     rename,
   }
 })

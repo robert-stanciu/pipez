@@ -23,11 +23,29 @@ import {
   sortedLevels,
   type ResolvedPort,
 } from '../model.ts'
-import { CIRCUIT_RULES, currentFor } from '../standards/electrical.ts'
+import {
+  balancePhases,
+  diversifiedCurrentFor,
+  IMBALANCE_THRESHOLD,
+  groupRcds,
+  layOutPanel,
+  recommendedMainBreaker,
+} from '../electrical/panel.ts'
+import {
+  breakerFor,
+  cableForRun,
+  CIRCUIT_RULES,
+  currentFor,
+  PHASES,
+  VOLT_DROP_LIMIT,
+  voltDrop,
+  voltDropPercent,
+} from '../standards/electrical.ts'
 import type {
   Circuit,
   ElectricalCircuitKind,
   Fixture,
+  PanelDesign,
   Project,
   RoutingWarning,
   Segment,
@@ -56,6 +74,7 @@ const SLAB_CROSSING_WEIGHT = 10
 
 export interface ElectricalSolution extends SystemSolution {
   circuits: Circuit[]
+  panel: PanelDesign | null
 }
 
 /* ------------------------------------------------------------------- grouping */
@@ -68,8 +87,35 @@ export interface ElectricalSolution extends SystemSolution {
  * it — and a new circuit is opened as soon as either limit would be exceeded.
  */
 export function groupCircuits(project: Project, nextId: () => string): Circuit[] {
+  const electrical = project.settings.electrical
   const powered = project.fixtures.filter((f) => fixtureDef(f.type).loads.circuit !== undefined)
   const circuits: Circuit[] = []
+
+  /** Everything a circuit needs before it has been routed or given a phase. */
+  const blank = (kind: ElectricalCircuitKind, name: string, poles: 1 | 3): Circuit => {
+    const rule = CIRCUIT_RULES[kind]
+    return {
+      id: nextId(),
+      kind,
+      name,
+      fixtureIds: [],
+      breakerAmps: rule.breakerAmps,
+      cableMm2: rule.cableMm2,
+      totalWatts: 0,
+      rcdProtected: rule.rcdProtected,
+      poles,
+      phases: [],
+      // Three live cores, a neutral and an earth for a 400 V circuit; one live, neutral and
+      // earth for a 230 V one.
+      cores: poles === 3 ? 5 : 3,
+      designCurrent: 0,
+      assessedCurrent: 0,
+      diversifiedCurrent: 0,
+      routeLength: 0,
+      voltDropPercent: 0,
+      rcdGroup: 0,
+    }
+  }
 
   const dedicated = powered.filter((f) => {
     const kind = fixtureDef(f.type).loads.circuit
@@ -78,17 +124,14 @@ export function groupCircuits(project: Project, nextId: () => string): Circuit[]
   for (const fixture of dedicated) {
     const def = fixtureDef(fixture.type)
     const kind = def.loads.circuit as ElectricalCircuitKind
-    const rule = CIRCUIT_RULES[kind]
-    circuits.push({
-      id: nextId(),
-      kind,
-      name: fixture.name,
-      fixtureIds: [fixture.id],
-      breakerAmps: rule.breakerAmps,
-      cableMm2: rule.cableMm2,
-      totalWatts: def.loads.watts ?? 0,
-      rcdProtected: rule.rcdProtected,
-    })
+    // A fixed appliance may be taken across all three lines, which is the whole reason for
+    // having them: a 7 kW cooker draws 30 A on one phase and 10 A on three.
+    const poles: 1 | 3 =
+      electrical.supply === 'three-phase' && fixture.threePhase === true ? 3 : 1
+    const circuit = blank(kind, fixture.name, poles)
+    circuit.fixtureIds = [fixture.id]
+    circuit.totalWatts = def.loads.watts ?? 0
+    circuits.push(circuit)
   }
 
   for (const kind of ['lighting', 'sockets'] as const) {
@@ -113,16 +156,9 @@ export function groupCircuits(project: Project, nextId: () => string): Circuit[]
             current.totalWatts + watts > rule.maxWatts)
         if (current === null || wouldOverflow) {
           index += 1
-          current = {
-            id: nextId(),
-            kind,
-            name: `${rule.label} ${index} — ${roomName}`,
-            fixtureIds: [],
-            breakerAmps: rule.breakerAmps,
-            cableMm2: rule.cableMm2,
-            totalWatts: 0,
-            rcdProtected: rule.rcdProtected,
-          }
+          // Lighting and sockets are always 230 V off one line; only a fixed appliance is
+          // worth taking across three.
+          current = blank(kind, `${rule.label} ${index} — ${roomName}`, 1)
           circuits.push(current)
         }
         current.fixtureIds.push(fixture.id)
@@ -147,6 +183,7 @@ export function routeElectrical(
   const empty = (): ElectricalSolution => ({
     network: { system: 'power', segments: [], fittings: [], totalLength: 0, unreachedFixtureIds: [] },
     circuits,
+    panel: null,
     warnings,
     graphNodes: 0,
     graphEdges: 0,
@@ -154,8 +191,8 @@ export function routeElectrical(
 
   if (circuits.length === 0) return empty()
 
-  const panel = servicePointOf(project, 'electricalPanel')
-  if (!panel) {
+  const consumerUnit = servicePointOf(project, 'electricalPanel')
+  if (!consumerUnit) {
     warnings.push({
       id: nextId(),
       severity: 'error',
@@ -174,7 +211,7 @@ export function routeElectrical(
 
   const attachAt: Vec2[] = [
     ...[...powerPorts.values()].map((p) => ({ x: p.position.x, y: p.position.y })),
-    panel.position,
+    consumerUnit.position,
   ]
 
   const levels = sortedLevels(project)
@@ -245,15 +282,15 @@ export function routeElectrical(
     return best
   }
 
-  const panelWall = wallOf.get(panel.levelId) ?? wallOf.get(levelIdFor(panel.z))
-  const panelNode = panelWall ? attachTerminal(graph, panelWall, to3(panel.position, panel.z)) : null
-  if (panelNode === null) {
+  const consumerUnitWall = wallOf.get(consumerUnit.levelId) ?? wallOf.get(levelIdFor(consumerUnit.z))
+  const consumerUnitNode = consumerUnitWall ? attachTerminal(graph, consumerUnitWall, to3(consumerUnit.position, consumerUnit.z)) : null
+  if (consumerUnitNode === null) {
     warnings.push({
       id: nextId(),
       severity: 'error',
       system: 'power',
       message: 'The consumer unit is not near any wall.',
-      position: to3(panel.position, panel.z),
+      position: to3(consumerUnit.position, consumerUnit.z),
     })
     return empty()
   }
@@ -299,7 +336,7 @@ export function routeElectrical(
 
     // Each circuit is its own tree — cables are not shared between circuits, so the reuse
     // discount must not tempt two circuits onto one run.
-    const tree = buildTree(graph, panelNode, terminals, { turnPenalty: 200, reuseDiscount: 0.3 })
+    const tree = buildTree(graph, consumerUnitNode, terminals, { turnPenalty: 200, reuseDiscount: 0.3 })
 
     for (const missed of tree.unreached) {
       unreached.push(missed.ref)
@@ -346,6 +383,10 @@ export function routeElectrical(
   const merged = mergeCollinear(segments)
   const fittings = deriveFittings(merged, 'power', nextId)
 
+  // Now the runs exist, the circuits can be finished: how long each one is, what that does to
+  // the volt drop, which line it hangs off and where it sits on the board.
+  const panel = commission(project, circuits, merged, warnings, nextId)
+
   return {
     network: {
       system: 'power',
@@ -355,8 +396,119 @@ export function routeElectrical(
       unreachedFixtureIds: unreached,
     },
     circuits,
+    panel,
     warnings,
     graphNodes: graph.nodeCount,
     graphEdges: graph.edgeCount,
   }
+}
+
+/**
+ * Turn routed circuits into a board.
+ *
+ * Cable size is settled here rather than at grouping time because it depends on the run: a
+ * 2.5 mm² circuit protected at 16 A is perfectly safe and still unusable at forty metres,
+ * because the far end sags below what the appliance will start on. Only once the route is
+ * known can the conductor be chosen to satisfy both the breaker and the drop.
+ */
+function commission(
+  project: Project,
+  circuits: Circuit[],
+  segments: Segment[],
+  warnings: RoutingWarning[],
+  nextId: () => string,
+): PanelDesign | null {
+  const electrical = project.settings.electrical
+  const { voltage, lineVoltage } = electrical
+
+  const lengthByCircuit = new Map<string, number>()
+  for (const segment of segments) {
+    if (!segment.circuitId) continue
+    lengthByCircuit.set(
+      segment.circuitId,
+      (lengthByCircuit.get(segment.circuitId) ?? 0) + segment.length,
+    )
+  }
+
+  for (const circuit of circuits) {
+    circuit.routeLength = lengthByCircuit.get(circuit.id) ?? 0
+    circuit.designCurrent = currentFor(circuit.totalWatts, circuit.poles, voltage, lineVoltage)
+    circuit.breakerAmps = Math.max(
+      CIRCUIT_RULES[circuit.kind].breakerAmps,
+      breakerFor(circuit.designCurrent),
+    )
+    circuit.diversifiedCurrent = diversifiedCurrentFor(circuit)
+
+    const limit = circuit.kind === 'lighting' ? VOLT_DROP_LIMIT.lighting : VOLT_DROP_LIMIT.other
+    // A socket circuit is assessed at its breaker rating: nobody knows what will be plugged
+    // into it, so the honest design condition is a full circuit. A fixed appliance is
+    // assessed at what it actually draws.
+    circuit.assessedCurrent =
+      circuit.kind === 'sockets' ? circuit.breakerAmps : circuit.designCurrent
+    circuit.cableMm2 = cableForRun(
+      circuit.breakerAmps,
+      circuit.assessedCurrent,
+      circuit.routeLength,
+      circuit.poles,
+      limit,
+      voltage,
+      lineVoltage,
+    )
+    circuit.voltDropPercent = voltDropPercent(
+      voltDrop(circuit.assessedCurrent, circuit.routeLength, circuit.cableMm2, circuit.poles),
+      circuit.poles,
+      voltage,
+      lineVoltage,
+    )
+
+    if (circuit.voltDropPercent > limit * 100 + 1e-9) {
+      warnings.push({
+        id: nextId(),
+        severity: 'warning',
+        system: 'power',
+        message: `${circuit.name} drops ${circuit.voltDropPercent.toFixed(1)}% over ${(circuit.routeLength / 1000).toFixed(1)} m, past the ${(limit * 100).toFixed(0)}% limit even at ${circuit.cableMm2} mm². Shorten the run or split the circuit.`,
+      })
+    }
+  }
+
+  // Update the cable actually drawn, so the plan, the 3D view and the schedule agree.
+  const sizeOf = new Map(circuits.map((circuit) => [circuit.id, circuit.cableMm2]))
+  for (const segment of segments) {
+    const size = segment.circuitId ? sizeOf.get(segment.circuitId) : undefined
+    if (size !== undefined) segment.size = size
+  }
+
+  balancePhases(circuits, electrical.supply)
+  const rcdGroups = groupRcds(circuits, electrical.circuitsPerRcd, electrical.supply)
+  const panel = layOutPanel(circuits, rcdGroups, electrical)
+
+  if (panel.maximumDemand > electrical.mainBreakerAmps) {
+    warnings.push({
+      id: nextId(),
+      severity: 'error',
+      system: 'power',
+      message: `Maximum demand is ${panel.maximumDemand.toFixed(1)} A per line against a ${electrical.mainBreakerAmps} A incomer. Uprate the supply to at least ${recommendedMainBreaker(panel.maximumDemand)} A, or move load off.`,
+    })
+  }
+
+  if (electrical.supply === 'three-phase' && panel.imbalanceAmps > IMBALANCE_THRESHOLD) {
+    const worst = PHASES.reduce((l, r) => (panel.phaseLoad[l] > panel.phaseLoad[r] ? l : r))
+    warnings.push({
+      id: nextId(),
+      severity: 'warning',
+      system: 'power',
+      message: `The lines are ${panel.imbalanceAmps.toFixed(1)} A apart (${panel.imbalancePercent.toFixed(0)}%), with ${worst} carrying ${panel.phaseLoad[worst].toFixed(1)} A. An unbalanced supply puts current in the neutral and pulls the line voltages apart — split a large single-phase load, or take it across all three.`,
+    })
+  }
+
+  if (panel.modulesUsed > panel.enclosureModules) {
+    warnings.push({
+      id: nextId(),
+      severity: 'warning',
+      system: 'power',
+      message: `The board needs ${panel.modulesUsed} modules and the largest standard enclosure holds ${panel.enclosureModules}.`,
+    })
+  }
+
+  return panel
 }

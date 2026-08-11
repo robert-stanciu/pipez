@@ -59,6 +59,7 @@ const fixture = z.object({
   roomId: z.string(),
   // Added after the first release; older fixtures simply follow the project default.
   entry: z.enum(['bottom', 'back']).nullable().default(null),
+  threePhase: z.boolean().nullable().default(null),
   wallIndex: z.number().int().nullable(),
   wallOffset: z.number(),
   position: vec2,
@@ -84,6 +85,21 @@ const settings = z.object({
   ceilingVoid: z.number().nonnegative(),
   gridPitch: z.number().positive(),
   connectionEntry: z.enum(['bottom', 'back']).default('bottom'),
+  electrical: z
+    .object({
+      supply: z.enum(['single-phase', 'three-phase']).default('three-phase'),
+      voltage: z.number().positive().default(230),
+      lineVoltage: z.number().positive().default(400),
+      mainBreakerAmps: z.number().positive().default(25),
+      circuitsPerRcd: z.number().int().positive().default(4),
+    })
+    .default({
+      supply: 'three-phase',
+      voltage: 230,
+      lineVoltage: 400,
+      mainBreakerAmps: 25,
+      circuitsPerRcd: 4,
+    }),
   standards: z.literal('EN'),
   drainage: z.object({
     // Added after the first release, so older files simply get the original behaviour.
@@ -104,6 +120,7 @@ export const projectSchema = z.object({
     ...DEFAULT_SETTINGS,
     ...partial,
     drainage: { ...DEFAULT_SETTINGS.drainage, ...(partial.drainage ?? {}) },
+    electrical: { ...DEFAULT_SETTINGS.electrical, ...(partial.electrical ?? {}) },
   })),
   levels: z.array(level).min(1),
   rooms: z.array(room),

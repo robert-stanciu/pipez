@@ -62,6 +62,15 @@ const wantsBack = computed(
   () => fixture.value !== null && entryOf(project.value, fixture.value) === 'back',
 )
 
+/** A dedicated fixed load on a three-phase supply is the only thing worth spreading. */
+const canBeThreePhase = computed(() => {
+  const kind = fixtureInfo.value?.loads.circuit
+  return (
+    project.value.settings.electrical.supply === 'three-phase' &&
+    (kind === 'appliance' || kind === 'cooker')
+  )
+})
+
 /** Whether back entry can actually be honoured — the appliance has to be against a wall. */
 const backedByWall = computed(
   () => fixture.value !== null && wallBehind(project.value, fixture.value) !== null,
@@ -314,6 +323,30 @@ const fixtureWallLength = computed(() => {
           :step="10"
           @update:model-value="projectStore.updateFixture(fixture.id, { z: $event })"
         />
+        <!-- Only a fixed appliance on its own circuit can be taken across three lines; a
+             socket or a light is 230 V off one, whatever the supply. -->
+        <label
+          v-if="canBeThreePhase"
+          class="flex items-center justify-between gap-2 py-1"
+        >
+          <span class="text-ink-400">Supply</span>
+          <select
+            class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+            :value="fixture.threePhase === true ? 'three' : 'single'"
+            @change="
+              projectStore.updateFixture(fixture.id, {
+                threePhase: ($event.target as HTMLSelectElement).value === 'three',
+              })
+            "
+          >
+            <option value="single">1~ {{ project.settings.electrical.voltage }} V</option>
+            <option value="three">3~ {{ project.settings.electrical.lineVoltage }} V</option>
+          </select>
+        </label>
+        <p v-if="canBeThreePhase && fixture.threePhase" class="mb-1 text-[11px] leading-relaxed text-ink-400">
+          Across all three lines, so each carries a third of the current — and the volt drop
+          falls with it.
+        </p>
         <NumberField
           v-if="fixture.wallIndex === null"
           label="Rotation"

@@ -156,6 +156,37 @@ Sizing follows: a vertical drainage run is sized by the stack tables rather than
 ones, and appears on the schedule as a soil stack rather than as more waste pipe. If the
 storeys have no wall in common the solver says so, by name, instead of inventing a hole.
 
+**Three-phase supply and the consumer unit.** A 400 V three-phase supply (the system older
+drawings call 380/220 V) is the default; single-phase is a setting. Most circuits stay at
+230 V off one line, and the point of the other two is that the load can be spread across
+them — and that a fixed appliance can be taken across all three. On the sample house, putting
+the 7 kW cooker on three phases takes it from **30.4 A on one line to 10.1 A on three**, its
+volt drop from 0.50% to 0.08%, and the installation's maximum demand from 39.2 A to 20.3 A —
+the difference between needing a 40 A incomer and fitting inside a 25 A one.
+
+Circuits are dealt across the lines longest-first onto the quietest line: a greedy heuristic
+rather than an optimum, but close enough on the couple of dozen circuits a building has. An
+imbalance is reported in **amps, not percent** — two small circuits can sit 100% apart and
+mean nothing, while the same percentage on a heavy supply is tens of amps down the neutral.
+
+**Cable is sized on the run, not just the breaker.** A 2.5 mm² circuit protected at 16 A is
+perfectly safe and still unusable at forty metres, because the far end sags below what the
+appliance will start on. Sizing happens after routing, when the length is known, against the
+3% (lighting) and 5% (everything else) limits, and the result is written back onto the runs so
+the plan, the 3D view and the board all say the same thing. A socket circuit is assessed at
+its breaker rating rather than its connected load — nobody knows what will be plugged in later.
+
+**The board gets its own view.** Wiring and board layout answer different questions: on the
+plan you want to know where a cable runs; on the board, what is on which way, behind which
+device, on which line, and whether the incomer can carry it. So the panel replaces the plan
+and 3D rather than sharing with them. It draws the consumer unit as a single-line diagram —
+busbars in the HD 308 core colours, main switch, each residual current device with its
+circuits tapped off the line they actually sit on — above the full circuit schedule.
+
+A three-phase board uses four-pole devices. A two-pole one switches a single line and the
+neutral, so everything behind it would have to be on that same line, which would tie the
+residual-current grouping to the phase balancing and let each constrain the other.
+
 **Cables are constrained by where, not just how far.** Horizontal runs follow wall centrelines
 inside the DIN 18015-3 installation zones, plus the ceiling plane for light points. A cable
 buried outside those zones is a real hazard, so it is not an option the search is offered.
@@ -168,7 +199,7 @@ Swappable, in `src/domain/standards/`:
 |---|---|
 | Drainage: discharge units, `Qww = K·√ΣDU`, diameters, falls, unvented limits | EN 12056-2, System I |
 | Supply: loading units, diameters, hot dead-leg limit | EN 806-3 |
-| Circuits, cable sizing, installation zones | HD 60364 (RO I7), DIN 18015-3 |
+| Circuits, cable sizing, volt drop, diversity, installation zones | HD 60364 (RO I7), DIN 18015-3 |
 
 Sizes accumulate towards the root and never reduce downstream. Anything the solver cannot
 make work becomes a located warning in the Checks panel rather than a plausible-looking
@@ -221,6 +252,14 @@ identical either way.
 For mounting: choosing a wall moves the connection onto *that* wall and no other; an explicit
 choice beats whichever wall happens to be nearest; and a wall-hung fixture set free-standing
 stops using the wall.
+
+`src/domain/electrical/panel.test.ts` covers the board: spreading the load lowers what each
+line carries; a cooker on three phases draws a third of the current and drops a third as much;
+a long run is uprated past what the breaker alone would need, and the cable chosen actually
+satisfies the limit it was chosen for; the cable in the schedule is the cable that was drawn;
+ways do not overlap on the rail and fit the enclosure; a three-phase board uses four-pole
+devices and nothing sits behind a device that could not switch it; lighting is dealt round
+different devices so one fault cannot take every light out; and the design is deterministic.
 
 For corners, junctions and strategies: no turn sharper than 45° survives anywhere in the
 drainage; every branch joins the run it feeds at 45° in the direction of flow; the schedule

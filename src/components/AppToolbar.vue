@@ -9,11 +9,13 @@ import { usePlanStore } from '../stores/plan.ts'
 import { useProjectStore } from '../stores/project.ts'
 import { useRoutingStore } from '../stores/routing.ts'
 import { useSelectionStore } from '../stores/selection.ts'
+import { useViewStore } from '../stores/view.ts'
 
 const projectStore = useProjectStore()
 const routing = useRoutingStore()
 const plan = usePlanStore()
 const selection = useSelectionStore()
+const view = useViewStore()
 
 const message = ref<string | null>(null)
 const busy = ref(false)
@@ -65,6 +67,24 @@ const buttonClass =
         class="w-44 rounded border border-transparent bg-transparent px-1.5 py-1 text-ink-100 outline-none hover:border-ink-700 focus:border-accent"
         @change="projectStore.rename(($event.target as HTMLInputElement).value)"
       />
+    </div>
+
+    <!-- Which workspace fills the screen. -->
+    <div class="flex items-center gap-0.5 rounded border border-ink-700 bg-ink-850 p-0.5">
+      <button
+        v-for="mode in (['layout', 'panel'] as const)"
+        :key="mode"
+        type="button"
+        class="rounded px-2.5 py-0.5 capitalize"
+        :class="
+          view.workspace === mode
+            ? 'bg-accent/20 text-ink-100'
+            : 'text-ink-400 hover:text-ink-200'
+        "
+        @click="view.setWorkspace(mode)"
+      >
+        {{ mode === 'layout' ? 'Layout' : 'Panel' }}
+      </button>
     </div>
 
     <div class="flex items-center gap-1">

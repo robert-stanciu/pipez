@@ -3,7 +3,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-export type SelectionKind = 'room' | 'wall' | 'fixture' | 'service' | 'opening'
+export type SelectionKind = 'room' | 'wall' | 'fixture' | 'service' | 'opening' | 'circuit'
 
 export interface Selection {
   kind: SelectionKind

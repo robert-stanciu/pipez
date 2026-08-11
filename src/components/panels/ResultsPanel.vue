@@ -9,11 +9,13 @@ import {
   type BomLine,
   type ConnectionEntry,
   type DrainageStrategy,
+  type SupplySystem,
 } from '../../domain/types.ts'
 import { useProjectStore } from '../../stores/project.ts'
 import { useRoutingStore } from '../../stores/routing.ts'
 import { useSelectionStore } from '../../stores/selection.ts'
 import { useViewStore } from '../../stores/view.ts'
+import NumberField from '../ui/NumberField.vue'
 import PanelSection from '../ui/PanelSection.vue'
 
 const routing = useRoutingStore()
@@ -161,6 +163,56 @@ function focusWarning(fixtureId?: string): void {
       </div>
       <p v-if="totals.length" class="mt-2 border-t border-ink-800 pt-2 text-[11px] text-ink-400">
         {{ totals.map((t) => `${SYSTEM_LABEL[t.system]} ${t.metres.toFixed(1)} m`).join(' · ') }}
+      </p>
+    </PanelSection>
+
+    <PanelSection title="Electrical supply">
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Supply</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.electrical.supply"
+          @change="
+            projectStore.updateElectrical({
+              supply: ($event.target as HTMLSelectElement).value as SupplySystem,
+            })
+          "
+        >
+          <option value="three-phase">3~ (400 V)</option>
+          <option value="single-phase">1~ (230 V)</option>
+        </select>
+      </label>
+      <NumberField
+        label="Line voltage"
+        suffix="V"
+        :model-value="projectStore.project.settings.electrical.lineVoltage"
+        :min="200"
+        :max="500"
+        :step="10"
+        @update:model-value="projectStore.updateElectrical({ lineVoltage: $event })"
+      />
+      <NumberField
+        label="Main switch"
+        suffix="A"
+        :model-value="projectStore.project.settings.electrical.mainBreakerAmps"
+        :min="6"
+        :max="250"
+        :step="1"
+        @update:model-value="projectStore.updateElectrical({ mainBreakerAmps: $event })"
+      />
+      <NumberField
+        label="Circuits per RCD"
+        suffix=""
+        :model-value="projectStore.project.settings.electrical.circuitsPerRcd"
+        :min="1"
+        :max="12"
+        :step="1"
+        @update:model-value="projectStore.updateElectrical({ circuitsPerRcd: $event })"
+      />
+      <p class="mt-1 text-[11px] leading-relaxed text-ink-400">
+        400 V between lines and {{ projectStore.project.settings.electrical.voltage }} V to
+        neutral — the same system older drawings call 380/220 V. Set an appliance to three
+        phases in its inspector to spread it across all three.
       </p>
     </PanelSection>
 

@@ -32,6 +32,15 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   gridPitch: 50,
   // Under-floor connections by default: the common arrangement, and it needs no wall.
   connectionEntry: 'bottom',
+  electrical: {
+    // Three-phase by default: it is what a new supply is, and a single-phase project simply
+    // never uses the other two lines.
+    supply: 'three-phase',
+    voltage: 230,
+    lineVoltage: 400,
+    mainBreakerAmps: 25,
+    circuitsPerRcd: 4,
+  },
   standards: 'EN',
   drainage: { strategy: 'rectilinear', minSlope: 0.01, designSlope: 0.02, maxSlope: 0.05 },
 }
@@ -137,6 +146,7 @@ export function createFixture(
     name: nextFixtureName(project, type),
     roomId,
     entry: null,
+    threePhase: null,
     wallIndex: onWall ? placement.wallIndex : null,
     wallOffset: onWall ? placement.wallOffset : 0,
     position: onWall ? { x: 0, y: 0 } : placement.position,

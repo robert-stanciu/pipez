@@ -175,6 +175,11 @@ export interface Fixture {
   roomId: Id
   /** Overrides the project default. Null means "whatever the project says". */
   entry: ConnectionEntry | null
+  /**
+   * Take this load across all three lines rather than one. Only meaningful for a fixed
+   * appliance on its own circuit; null follows the catalogue, which is single-phase.
+   */
+  threePhase: boolean | null
   /** Wall the fixture is anchored to, or null when it stands free on the floor. */
   wallIndex: number | null
   /** Wall-anchored: distance along the wall from its start vertex to the fixture's centre. */
@@ -253,6 +258,7 @@ export interface ProjectSettings {
   gridPitch: number
   /** Default for appliances that do not override it. */
   connectionEntry: ConnectionEntry
+  electrical: ElectricalSettings
   standards: 'EN'
   drainage: DrainageSettings
 }
@@ -323,6 +329,31 @@ export interface RoutingWarning {
   fixtureId?: Id
 }
 
+export type Phase = 'L1' | 'L2' | 'L3'
+
+/**
+ * How the building is fed.
+ *
+ * A three-phase supply gives 400 V between lines and 230 V line-to-neutral (the older name
+ * for the same thing is 380/220 V). Most circuits still run at 230 V off one phase; the point
+ * of the three is that the load can be spread across them, and that a big fixed load — a
+ * cooker, a heat pump, a workshop machine — can be taken across all three and draw a third
+ * of the current it would on one.
+ */
+export type SupplySystem = 'single-phase' | 'three-phase'
+
+export interface ElectricalSettings {
+  supply: SupplySystem
+  /** Line-to-neutral, volts. */
+  voltage: number
+  /** Line-to-line, volts. Only meaningful on a three-phase supply. */
+  lineVoltage: number
+  /** Rating of the main incoming switch, per phase. */
+  mainBreakerAmps: number
+  /** Circuits per residual current device before another one is added. */
+  circuitsPerRcd: number
+}
+
 export interface Circuit {
   id: Id
   kind: ElectricalCircuitKind
@@ -334,6 +365,26 @@ export interface Circuit {
   cableMm2: number
   totalWatts: number
   rcdProtected: boolean
+
+  /** One phase for a 230 V circuit, all three for a 400 V one. */
+  poles: 1 | 3
+  phases: Phase[]
+  /** Live cores plus neutral plus protective earth. */
+  cores: number
+  /** Current the circuit is designed to draw, per line. */
+  designCurrent: number
+  /**
+   * The current volt drop is assessed at. For a socket circuit that is the breaker rating,
+   * because what gets plugged in later is unknown; for a fixed load it is what it draws.
+   */
+  assessedCurrent: number
+  /** What that load counts as when sizing the incomer, after diversity. */
+  diversifiedCurrent: number
+  /** Routed length of the longest run on this circuit, mm. */
+  routeLength: number
+  voltDropPercent: number
+  /** Which residual current device this sits behind. */
+  rcdGroup: number
 }
 
 export interface Network {
@@ -353,9 +404,55 @@ export interface BomLine {
   quantity: number
 }
 
+/* --------------------------------------------------------------------- panel */
+
+export interface RcdGroup {
+  index: number
+  /** Trip current, milliamps. */
+  sensitivity: number
+  poles: 2 | 4
+  circuitIds: Id[]
+  /** Modules this device occupies on the rail. */
+  modules: number
+}
+
+export interface PanelWay {
+  /** Position on the rail, counted in modules from the left. */
+  slot: number
+  modules: number
+  circuit: Circuit
+}
+
+/**
+ * The consumer unit as it would actually be built: what sits on the rail, in what order,
+ * behind which residual current device, on which phase.
+ */
+export interface PanelDesign {
+  supply: SupplySystem
+  mainBreakerAmps: number
+  /** Modules the main switch occupies. */
+  mainSwitchModules: number
+  rcdGroups: RcdGroup[]
+  ways: PanelWay[]
+  /** Total modules used, and the next standard enclosure that holds them. */
+  modulesUsed: number
+  enclosureModules: number
+  rows: number
+  /** Diversified load carried by each line. */
+  phaseLoad: Record<Phase, number>
+  /** Spread between the busiest and quietest line, as a percentage of the mean. */
+  imbalancePercent: number
+  /** The same spread in amps, which is what actually flows down the neutral. */
+  imbalanceAmps: number
+  /** Maximum demand across the whole installation, per line. */
+  maximumDemand: number
+}
+
 export interface RoutingResult {
   networks: Network[]
   circuits: Circuit[]
+  /** Null until there is a consumer unit and something to put in it. */
+  panel: PanelDesign | null
   warnings: RoutingWarning[]
   bom: BomLine[]
   stats: {
@@ -368,6 +465,7 @@ export interface RoutingResult {
 export const EMPTY_RESULT: RoutingResult = {
   networks: [],
   circuits: [],
+  panel: null,
   warnings: [],
   bom: [],
   stats: { solveMs: 0, graphNodes: 0, graphEdges: 0 },

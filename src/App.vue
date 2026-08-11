@@ -7,16 +7,19 @@ import AppToolbar from './components/AppToolbar.vue'
 import FixtureLibrary from './components/panels/FixtureLibrary.vue'
 import InspectorPanel from './components/panels/InspectorPanel.vue'
 import ResultsPanel from './components/panels/ResultsPanel.vue'
+import PanelView from './components/panel/PanelView.vue'
 import PlanCanvas from './components/plan2d/PlanCanvas.vue'
 import Scene3d from './components/view3d/Scene3d.vue'
 import { loadAutosave, saveAutosave } from './io/autosave.ts'
 import { usePlanStore } from './stores/plan.ts'
 import { useProjectStore } from './stores/project.ts'
 import { useRoutingStore } from './stores/routing.ts'
+import { useViewStore } from './stores/view.ts'
 
 const projectStore = useProjectStore()
 const routing = useRoutingStore()
 const plan = usePlanStore()
+const view = useViewStore()
 
 routing.watchProject()
 
@@ -60,24 +63,29 @@ watchDebounced(() => projectStore.project, (project) => void saveAutosave(projec
     <AppToolbar />
 
     <div class="flex min-h-0 flex-1">
-      <aside class="w-56 shrink-0 border-r border-ink-800">
+      <aside v-if="view.workspace === 'layout'" class="w-56 shrink-0 border-r border-ink-800">
         <FixtureLibrary />
       </aside>
 
       <div ref="centre" class="flex min-w-0 flex-1">
-        <div class="min-w-0" :style="{ flexBasis: `${split * 100}%` }">
-          <PlanCanvas />
-        </div>
+        <!-- The panel takes the whole middle; the plan and 3D share it when it does not. -->
+        <PanelView v-if="view.workspace === 'panel'" class="min-w-0 flex-1" />
 
-        <div
-          class="w-1 shrink-0 cursor-col-resize bg-ink-800 transition-colors hover:bg-accent"
-          :class="resizing ? 'bg-accent' : ''"
-          @pointerdown.prevent="startResize"
-        />
+        <template v-else>
+          <div class="min-w-0" :style="{ flexBasis: `${split * 100}%` }">
+            <PlanCanvas />
+          </div>
 
-        <div class="min-w-0 flex-1">
-          <Scene3d />
-        </div>
+          <div
+            class="w-1 shrink-0 cursor-col-resize bg-ink-800 transition-colors hover:bg-accent"
+            :class="resizing ? 'bg-accent' : ''"
+            @pointerdown.prevent="startResize"
+          />
+
+          <div class="min-w-0 flex-1">
+            <Scene3d />
+          </div>
+        </template>
       </div>
 
       <aside class="flex w-72 shrink-0 flex-col border-l border-ink-800 bg-ink-900">

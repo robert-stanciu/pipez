@@ -24,6 +24,7 @@ export function solve(project: Project): RoutingResult {
     return {
       networks: [],
       circuits: [],
+      panel: null,
       warnings: [],
       bom: [],
       stats: { solveMs: 0, graphNodes: 0, graphEdges: 0 },
@@ -45,6 +46,7 @@ export function solve(project: Project): RoutingResult {
   return {
     networks,
     circuits: power.circuits,
+    panel: power.panel,
     warnings,
     bom: buildBom(networks, power.circuits),
     stats: {
