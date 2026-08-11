@@ -57,6 +57,8 @@ const fixture = z.object({
   type: z.string(),
   name: z.string(),
   roomId: z.string(),
+  // Added after the first release; older fixtures simply follow the project default.
+  entry: z.enum(['bottom', 'back']).nullable().default(null),
   wallIndex: z.number().int().nullable(),
   wallOffset: z.number(),
   position: vec2,
@@ -81,6 +83,7 @@ const settings = z.object({
   floorBuildUp: z.number().nonnegative(),
   ceilingVoid: z.number().nonnegative(),
   gridPitch: z.number().positive(),
+  connectionEntry: z.enum(['bottom', 'back']).default('bottom'),
   standards: z.literal('EN'),
   drainage: z.object({
     // Added after the first release, so older files simply get the original behaviour.

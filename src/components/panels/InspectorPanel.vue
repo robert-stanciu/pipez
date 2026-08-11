@@ -5,7 +5,7 @@ import { computed } from 'vue'
 import { fixtureDef } from '../../domain/catalog/fixtures.ts'
 import { wallLength } from '../../domain/edit.ts'
 import { wallsOf } from '../../domain/model.ts'
-import { SERVICE_LABEL, SYSTEM_LABEL } from '../../domain/types.ts'
+import { SERVICE_LABEL, SYSTEM_LABEL, type ConnectionEntry } from '../../domain/types.ts'
 import { useLevels } from '../../composables/useLevels.ts'
 import { useProjectStore } from '../../stores/project.ts'
 import { useSelectionStore } from '../../stores/selection.ts'
@@ -243,6 +243,34 @@ const fixtureWallLength = computed(() => {
           :step="10"
           @update:model-value="projectStore.updateFixture(fixture.id, { z: $event })"
         />
+        <label class="flex items-center justify-between gap-2 py-1">
+          <span class="text-ink-400">Pipe entry</span>
+          <select
+            class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+            :value="fixture.entry ?? ''"
+            @change="
+              projectStore.updateFixture(fixture.id, {
+                entry: (($event.target as HTMLSelectElement).value || null) as
+                  | ConnectionEntry
+                  | null,
+              })
+            "
+          >
+            <option value="">
+              Project default ({{
+                project.settings.connectionEntry === 'back' ? 'behind' : 'below'
+              }})
+            </option>
+            <option value="bottom">From below</option>
+            <option value="back">From behind</option>
+          </select>
+        </label>
+        <p
+          v-if="(fixture.entry ?? project.settings.connectionEntry) === 'back' && fixture.wallIndex === null"
+          class="mt-1 text-[11px] leading-relaxed text-amber-300/80"
+        >
+          Not against a wall, so this one connects from below regardless.
+        </p>
         <NumberField
           v-if="fixture.wallIndex === null"
           label="Rotation"

@@ -560,20 +560,35 @@ export function attachTerminal(
   layer: Layer,
   point: { x: number; y: number; z: number },
   weight = 1,
+  /**
+   * Plan position the connection must pass through before turning vertical. Back entry uses
+   * it to put the riser inside the wall behind the appliance instead of in front of it.
+   */
+  via?: Vec2,
 ): number | null {
-  const layerNode = layer.at(graph, point) ?? layer.nearest(graph, point)
+  const search = via ?? point
+  const layerNode = layer.at(graph, search) ?? layer.nearest(graph, search)
   if (layerNode === null) return null
   const layerPos = graph.position(layerNode)
 
   const terminal = graph.node(point)
-  if (Math.abs(layerPos.x - point.x) < 1 && Math.abs(layerPos.y - point.y) < 1) {
-    graph.connect(terminal, layerNode, weight)
+  let cursor = terminal
+
+  if (via && (Math.abs(via.x - point.x) > 1 || Math.abs(via.y - point.y) > 1)) {
+    const back = graph.node({ x: via.x, y: via.y, z: point.z })
+    graph.connect(cursor, back, weight)
+    cursor = back
+  }
+
+  const from = graph.position(cursor)
+  if (Math.abs(layerPos.x - from.x) < 1 && Math.abs(layerPos.y - from.y) < 1) {
+    graph.connect(cursor, layerNode, weight)
     return terminal
   }
 
-  const alongX = graph.node({ x: layerPos.x, y: point.y, z: point.z })
+  const alongX = graph.node({ x: layerPos.x, y: from.y, z: point.z })
   const overhead = graph.node({ x: layerPos.x, y: layerPos.y, z: point.z })
-  graph.connect(terminal, alongX, weight)
+  graph.connect(cursor, alongX, weight)
   graph.connect(alongX, overhead, weight)
   graph.connect(overhead, layerNode, weight)
   return terminal

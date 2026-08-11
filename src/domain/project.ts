@@ -30,6 +30,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   floorBuildUp: 250,
   ceilingVoid: 300,
   gridPitch: 50,
+  // Under-floor connections by default: the common arrangement, and it needs no wall.
+  connectionEntry: 'bottom',
   standards: 'EN',
   drainage: { strategy: 'rectilinear', minSlope: 0.01, designSlope: 0.02, maxSlope: 0.05 },
 }
@@ -134,6 +136,7 @@ export function createFixture(
     type,
     name: nextFixtureName(project, type),
     roomId,
+    entry: null,
     wallIndex: onWall ? placement.wallIndex : null,
     wallOffset: onWall ? placement.wallOffset : 0,
     position: onWall ? { x: 0, y: 0 } : placement.position,

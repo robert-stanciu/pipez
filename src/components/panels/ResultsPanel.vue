@@ -7,6 +7,7 @@ import {
   SYSTEM_KINDS,
   SYSTEM_LABEL,
   type BomLine,
+  type ConnectionEntry,
   type DrainageStrategy,
 } from '../../domain/types.ts'
 import { useProjectStore } from '../../stores/project.ts'
@@ -189,6 +190,28 @@ function focusWarning(fixtureId?: string): void {
             : 'Every run is parallel to a wall.'
         }}
         Turns sharper than 45° are always built from a pair of 45° bends.
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Appliance entry</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.connectionEntry"
+          @change="
+            projectStore.updateSettings({
+              connectionEntry: ($event.target as HTMLSelectElement).value as ConnectionEntry,
+            })
+          "
+        >
+          <option value="bottom">From below</option>
+          <option value="back">From behind</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        {{
+          projectStore.project.settings.connectionEntry === 'back'
+            ? 'Water and waste go into the wall behind each appliance and drop inside it. Individual appliances can override this.'
+            : 'Water and waste drop through the floor beneath each appliance. Individual appliances can override this.'
+        }}
       </p>
       <label class="flex items-center justify-between py-1">
         <span class="text-ink-400">Design fall</span>

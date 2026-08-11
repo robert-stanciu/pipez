@@ -26,10 +26,12 @@
 import { fixtureDef } from '../catalog/fixtures.ts'
 import { dist3, to3, type Vec2, type Vec3 } from '../geometry/vec.ts'
 import {
+  connectionAnchor,
   findLevel,
   portsOfSystem,
   servicePointOf,
   sortedLevels,
+  type ConnectionAnchor,
   type ResolvedPort,
 } from '../model.ts'
 import {
@@ -58,6 +60,9 @@ const MIN_TRAP_DROP = 75
 
 /** How far below the finished floor a branch invert has to stay to be covered by screed. */
 const MIN_INVERT_DEPTH = 60
+
+/** Clearance a wall needs over the pipe bore before a back-entry drop will hide inside it. */
+const WALL_PIPE_CLEARANCE = 40
 
 /**
  * Cost multiplier for punching through a slab.
@@ -188,12 +193,17 @@ export function routeWaste(
 
   const terminals: Terminal[] = []
   const terminalPorts = new Map<number, ResolvedPort>()
+  const anchorOf = new Map<number, ConnectionAnchor>()
   for (const port of ports) {
     const level = levelOfPort(project, port, levels)
     const plane = level ? planeOf.get(level.id) : null
-    const node = plane
-      ? (plane.at(graph, port.position) ?? plane.nearest(graph, port.position))
-      : null
+    const fixture = project.fixtures.find((f) => f.id === port.fixtureId)
+    // Back entry turns the pipe vertical inside the wall behind the appliance rather than
+    // directly beneath it, so that is where the branch has to come up to meet it.
+    const anchor = fixture
+      ? connectionAnchor(project, fixture, port)
+      : { plan: { x: port.position.x, y: port.position.y }, wall: null, fellBack: false }
+    const node = plane ? (plane.at(graph, anchor.plan) ?? plane.nearest(graph, anchor.plan)) : null
     if (node === null || node === undefined) {
       warnings.push({
         id: nextId(),
@@ -207,6 +217,28 @@ export function routeWaste(
     }
     terminals.push({ ref: port.fixtureId, node, load: duOf(project, port), minSize: port.dn })
     terminalPorts.set(node, port)
+    anchorOf.set(node, anchor)
+
+    if (anchor.fellBack) {
+      warnings.push({
+        id: nextId(),
+        severity: 'info',
+        system: 'waste',
+        message: `${port.fixtureName} is set to connect from the back but is not against a wall, so it drains from underneath instead.`,
+        position: port.position,
+        fixtureId: port.fixtureId,
+      })
+    }
+    if (anchor.wall && anchor.wall.thickness < port.dn + WALL_PIPE_CLEARANCE) {
+      warnings.push({
+        id: nextId(),
+        severity: 'warning',
+        system: 'waste',
+        message: `${port.fixtureName} drops a DN${port.dn} inside a ${anchor.wall.thickness} mm wall. That will not conceal — thicken the wall to at least ${port.dn + WALL_PIPE_CLEARANCE} mm, box the pipe out, or connect from underneath.`,
+        position: port.position,
+        fixtureId: port.fixtureId,
+      })
+    }
   }
 
   const tree = buildTree(graph, root, terminals, { turnPenalty: 400, reuseDiscount: 0.12 })
@@ -362,12 +394,37 @@ export function routeWaste(
     }
 
     const size = Math.max(port.dn, branchDiameter(terminal.load, port.dn))
-    const foot = { x: port.position.x, y: port.position.y, z: branchZ }
+    const anchor = anchorOf.get(terminal.node)?.plan ?? {
+      x: port.position.x,
+      y: port.position.y,
+    }
+    const node = graph.position(terminal.node)
+
+    /** A horizontal piece at the given level, skipped when the two ends coincide. */
+    const tail = (from: Vec2, to: Vec2, z: number) => {
+      const length = Math.hypot(to.x - from.x, to.y - from.y)
+      if (length <= 1) return
+      segments.push({
+        id: nextId(),
+        system: 'waste',
+        a: { x: from.x, y: from.y, z },
+        b: { x: to.x, y: to.y, z },
+        size,
+        load: terminal.load,
+        length,
+        role: 'branch',
+        slope: 0,
+      })
+    }
+
+    // Back entry: run horizontally off the appliance into the wall before turning down.
+    tail({ x: port.position.x, y: port.position.y }, anchor, port.position.z)
+
     segments.push({
       id: nextId(),
       system: 'waste',
-      a: port.position,
-      b: foot,
+      a: { x: anchor.x, y: anchor.y, z: port.position.z },
+      b: { x: anchor.x, y: anchor.y, z: branchZ },
       size,
       load: terminal.load,
       length: drop,
@@ -375,23 +432,10 @@ export function routeWaste(
       slope: 1,
     })
 
-    // The branch node is not always exactly under the trap — on the diagonal strategy the
-    // lattice may put it a cell away — so close the gap with a short tail rather than
-    // leaving the drop hanging next to the network.
-    const node = graph.position(terminal.node)
-    if (Math.hypot(node.x - foot.x, node.y - foot.y) > 1) {
-      segments.push({
-        id: nextId(),
-        system: 'waste',
-        a: foot,
-        b: { x: node.x, y: node.y, z: branchZ },
-        size,
-        load: terminal.load,
-        length: Math.hypot(node.x - foot.x, node.y - foot.y),
-        role: 'branch',
-        slope: 0,
-      })
-    }
+    // The branch node is not always exactly under the drop — with any-bearing routing the
+    // lattice may put it a cell away — so close the gap rather than leaving the drop hanging
+    // next to the network.
+    tail(anchor, { x: node.x, y: node.y }, branchZ)
 
     // Only the horizontal part of the run counts against the unvented limit — a stack does
     // not siphon a trap the way a long flat branch does.

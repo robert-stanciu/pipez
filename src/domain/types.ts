@@ -156,11 +156,25 @@ export interface FixtureDef {
   loads: FixtureLoads
 }
 
+/**
+ * Which face of an appliance the water and waste connect to.
+ *
+ * `bottom` takes them down through the floor beneath the appliance — pipes in the plinth, or
+ * buried in the screed. `back` takes them horizontally into the wall behind it and drops them
+ * inside the wall instead, which is what wall-hung sanitaryware and a back-to-wall WC need,
+ * and what you use when the slab must not be broken into.
+ *
+ * Cables are not affected: a socket is always fed from behind.
+ */
+export type ConnectionEntry = 'bottom' | 'back'
+
 export interface Fixture {
   id: Id
   type: FixtureType
   name: string
   roomId: Id
+  /** Overrides the project default. Null means "whatever the project says". */
+  entry: ConnectionEntry | null
   /** Wall the fixture is anchored to, or null when it stands free on the floor. */
   wallIndex: number | null
   /** Wall-anchored: distance along the wall from its start vertex to the fixture's centre. */
@@ -237,6 +251,8 @@ export interface ProjectSettings {
   ceilingVoid: number
   /** Snapping grid for the plan editor. */
   gridPitch: number
+  /** Default for appliances that do not override it. */
+  connectionEntry: ConnectionEntry
   standards: 'EN'
   drainage: DrainageSettings
 }

@@ -18,6 +18,7 @@
 import { fixtureDef } from '../catalog/fixtures.ts'
 import { dist3, to3, type Vec2, type Vec3 } from '../geometry/vec.ts'
 import {
+  connectionAnchor,
   fixturePorts,
   portsOfSystem,
   servicePointOf,
@@ -170,7 +171,13 @@ export function routeSupply(
   const byNode = new Map<number, ResolvedPort>()
   for (const port of consumers) {
     const plane = planeFor(port.position.z)
-    const node = plane ? attachTerminal(graph, plane, port.position) : null
+    // Back entry brings the tap feed out of the wall, so the drop runs inside the wall
+    // rather than down the face of the room in front of the appliance.
+    const fixture = project.fixtures.find((f) => f.id === port.fixtureId)
+    const anchor = fixture ? connectionAnchor(project, fixture, port) : null
+    const node = plane
+      ? attachTerminal(graph, plane, port.position, 1, anchor?.wall ? anchor.plan : undefined)
+      : null
     if (node === null) {
       warnings.push({
         id: nextId(),

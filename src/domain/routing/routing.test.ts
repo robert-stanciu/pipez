@@ -18,6 +18,7 @@ import {
   relevel,
   sampleProject,
 } from '../project.ts'
+import { wallsOf } from '../model.ts'
 import { branchDiameter, flowFromDu } from '../standards/en12056.ts'
 import { supplyDiameter } from '../standards/en806.ts'
 import type { FixtureType, Network, Project, Segment } from '../types.ts'
@@ -499,6 +500,119 @@ describe('drainage strategies', () => {
         expect(Math.min(dx, dy)).toBeLessThan(1)
       }
     }
+  })
+})
+
+describe('appliance connection entry', () => {
+  const entryProject = (entry: 'bottom' | 'back') => {
+    const project = sampleProject()
+    project.settings.connectionEntry = entry
+    return project
+  }
+
+  /** Distance from a plan point to the nearest wall centreline on the storey it is on. */
+  const distanceToWall = (project: Project, p: { x: number; y: number }, z: number) => {
+    // The storey a point belongs to is the highest floor at or below it.
+    const floors = [...new Set(project.rooms.map((r) => r.floorZ))].sort((a, b) => a - b)
+    const floorZ = floors.filter((f) => f <= z + 200).pop() ?? floors[0] ?? 0
+    const walls = project.rooms
+      .filter((r) => r.floorZ === floorZ)
+      .flatMap((r) => wallsOf(r))
+    if (walls.length === 0) return Infinity
+    return Math.min(
+      ...walls.map((w) => {
+        const ab = { x: w.centerB.x - w.centerA.x, y: w.centerB.y - w.centerA.y }
+        const lengthSq = ab.x * ab.x + ab.y * ab.y || 1
+        const t = Math.max(
+          0,
+          Math.min(1, ((p.x - w.centerA.x) * ab.x + (p.y - w.centerA.y) * ab.y) / lengthSq),
+        )
+        return Math.hypot(p.x - (w.centerA.x + ab.x * t), p.y - (w.centerA.y + ab.y * t))
+      }),
+    )
+  }
+
+  /** Vertical drops, and how far each sits from a wall. */
+  const dropOffsets = (project: Project) => {
+    const waste = solve(project).networks.find((n) => n.system === 'waste')!
+    return waste.segments
+      .filter((s) => s.role === 'drop')
+      .map((s) => distanceToWall(project, s.a, Math.max(s.a.z, s.b.z)))
+  }
+
+  test('back entry puts the drops in the wall, bottom entry puts them under the appliance', () => {
+    const back = dropOffsets(entryProject('back'))
+    const bottom = dropOffsets(entryProject('bottom'))
+    expect(back.length).toBeGreaterThan(0)
+    expect(back.length).toBe(bottom.length)
+
+    // In the wall means on its centreline: within half a wall thickness of it.
+    const inWall = back.filter((d) => d < 60).length
+    expect(inWall).toBeGreaterThan(0)
+
+    // And back entry moves them there — the average drop is closer to a wall than before.
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+    expect(mean(back)).toBeLessThan(mean(bottom))
+  })
+
+  test('back entry adds the horizontal tail from the appliance into the wall', () => {
+    const straight = solve(entryProject('bottom')).networks.find((n) => n.system === 'waste')!
+    const behind = solve(entryProject('back')).networks.find((n) => n.system === 'waste')!
+    // The pipe has to travel back to the wall before it can turn down, so there is more of it.
+    expect(behind.totalLength).toBeGreaterThan(straight.totalLength)
+  })
+
+  test('a per-fixture override beats the project default, in both directions', () => {
+    for (const [projectDefault, override] of [
+      ['bottom', 'back'],
+      ['back', 'bottom'],
+    ] as const) {
+      const project = entryProject(projectDefault)
+      const sink = project.fixtures.find((f) => f.type === 'sink')!
+      sink.entry = override
+
+      const plain = entryProject(projectDefault)
+      expect(solve(project)).not.toEqual(solve(plain))
+    }
+  })
+
+  test('a fixture with no wall behind it falls back to bottom entry and says so', () => {
+    const project = entryProject('back')
+    const kitchen = project.rooms.find((r) => r.name === 'Kitchen')!
+    project.fixtures.push(
+      createFixture(project, 'floor-drain', kitchen.id, { position: { x: 1700, y: 1400 } }),
+    )
+
+    const result = solve(project)
+    expect(
+      result.warnings.some((w) => /not against a wall/.test(w.message) && w.severity === 'info'),
+    ).toBe(true)
+    // And it is still connected, rather than dropped for being awkward.
+    expect(result.networks.find((n) => n.system === 'waste')!.unreachedFixtureIds).toEqual([])
+  })
+
+  test('a wall too thin to hide the pipe is reported', () => {
+    const project = entryProject('back')
+    // A WC needs DN100; a 100 mm wall cannot conceal it.
+    for (const room of project.rooms) room.wallThickness = 100
+
+    const warnings = solve(project).warnings.filter((w) => /will not conceal/.test(w.message))
+    expect(warnings.length).toBeGreaterThan(0)
+    expect(warnings.every((w) => w.severity === 'warning')).toBe(true)
+  })
+
+  test('everything still reaches, and still runs downhill, on back entry', () => {
+    const result = solve(entryProject('back'))
+    for (const network of result.networks) expect(network.unreachedFixtureIds).toEqual([])
+    for (const segment of result.networks.find((n) => n.system === 'waste')!.segments) {
+      expect(segment.a.z).toBeGreaterThanOrEqual(segment.b.z - 1e-6)
+    }
+  })
+
+  test('cabling is unaffected — a socket is always fed from behind', () => {
+    const lengthOf = (entry: 'bottom' | 'back') =>
+      solve(entryProject(entry)).networks.find((n) => n.system === 'power')!.totalLength
+    expect(lengthOf('back')).toBeCloseTo(lengthOf('bottom'), 6)
   })
 })
 

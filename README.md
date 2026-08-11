@@ -107,6 +107,23 @@ are square in plan meet at about 89°, and a swept half of that computes as 44.4
 snapped to the catalogue (15/30/45 for drainage, 45/90 for pressurised pipe and cable), and
 anything under 5° is a joint in a straight run rather than a fitting.
 
+**Appliances connect from below or from behind.** Set the default in Project settings and
+override it per appliance in the inspector:
+
+- **From below** — water and waste drop through the floor beneath the appliance. Pipes in the
+  plinth, or buried in the screed.
+- **From behind** — they run horizontally into the wall behind it and turn vertical *inside
+  the wall*. What wall-hung sanitaryware and a back-to-wall WC need, and what you use when
+  the slab must not be broken into.
+
+The visible difference is where the verticals are: under the appliance, or on the wall
+centreline. On the sample house, back entry moves all eight drops onto walls and adds a metre
+of pipe for the tails. It also brings a check with it — a DN100 WC will not hide inside a
+100 mm wall, so the app says so and tells you what would fix it. An appliance that is not
+against a wall cannot be fed from behind, and falls back to below rather than failing.
+
+Cables are not affected: a socket is always fed from behind.
+
 **Stacks are not placed — they emerge.** A run may only cross a slab inside a wall that exists
 on *both* storeys, and each crossing is charged steeply. Combined with the reuse discount,
 that pulls every upstairs branch onto one shaft: a soil stack, a rising main, a cable riser.
@@ -168,6 +185,12 @@ and a storey tall; both upstairs fixtures share **one** shaft rather than punchi
 each; a WC upstairs forces the stack to DN100; branches stay under their own storey's floor;
 supply and cabling each get their own riser; a misaligned upper storey is reported as
 unreachable with the reason; and a stack is billed as a soil stack.
+
+For connection entry: back entry puts the drops on the wall centreline and below entry puts
+them under the appliance; the tail into the wall shows up as extra pipe; a per-fixture
+override beats the project default both ways; an appliance with no wall behind it falls back
+and says so while staying connected; a wall too thin to hide the pipe is reported; and
+cabling comes out identical either way.
 
 For corners and strategies: no turn sharper than 45° survives anywhere in the drainage; each
 swept corner yields exactly two elbows; a joint in a graded straight run is not mistaken for

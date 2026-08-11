@@ -10,12 +10,22 @@ import { fixtureDef } from './catalog/fixtures.ts'
 import { edgesOf, offsetPolygon, pointInPolygon, type Edge } from './geometry/polygon.ts'
 import {
   add2,
+  closestPointOnSegment,
   scale2,
   to3,
   type Vec2,
   type Vec3,
 } from './geometry/vec.ts'
-import type { Fixture, Level, Opening, PortKind, Project, Room, SystemKind } from './types.ts'
+import type {
+  ConnectionEntry,
+  Fixture,
+  Level,
+  Opening,
+  PortKind,
+  Project,
+  Room,
+  SystemKind,
+} from './types.ts'
 
 /* ---------------------------------------------------------------------- walls */
 
@@ -196,6 +206,48 @@ export function fixturePorts(project: Project, fixture: Fixture): ResolvedPort[]
 /** Every port of a given system across the whole project. */
 export function portsOfSystem(project: Project, system: SystemKind): ResolvedPort[] {
   return project.fixtures.flatMap((f) => fixturePorts(project, f).filter((p) => p.kind === system))
+}
+
+/* ---------------------------------------------------------- connection entry */
+
+export const entryOf = (project: Project, fixture: Fixture): ConnectionEntry =>
+  fixture.entry ?? project.settings.connectionEntry
+
+export interface ConnectionAnchor {
+  /** Plan position where the vertical part of the connection runs. */
+  plan: Vec2
+  /** The wall it runs inside, when it runs in one. */
+  wall: WallGeometry | null
+  /** True when the requested entry could not be honoured and bottom entry was used instead. */
+  fellBack: boolean
+}
+
+/**
+ * Where a fixture's connection turns vertical.
+ *
+ * Bottom entry drops straight out of the appliance, so the vertical is directly beneath the
+ * port. Back entry goes horizontally into the wall first and drops inside it, so the vertical
+ * sits on the wall centreline behind the fixture — which is the whole visible difference: the
+ * pipes are in the wall rather than under the floor in the middle of the room.
+ *
+ * A fixture that is not against a wall cannot be fed from behind, so it falls back to bottom
+ * entry and says so.
+ */
+export function connectionAnchor(
+  project: Project,
+  fixture: Fixture,
+  port: ResolvedPort,
+): ConnectionAnchor {
+  const beneath: Vec2 = { x: port.position.x, y: port.position.y }
+  if (entryOf(project, fixture) !== 'back') return { plan: beneath, wall: null, fellBack: false }
+
+  const room = findRoom(project, fixture.roomId)
+  const wall = room && fixture.wallIndex !== null ? wallOf(room, fixture.wallIndex) : null
+  if (!wall) return { plan: beneath, wall: null, fellBack: true }
+
+  // Straight back from the port to the middle of the wall behind it.
+  const { point } = closestPointOnSegment(beneath, wall.centerA, wall.centerB)
+  return { plan: point, wall, fellBack: false }
 }
 
 /** Footprint corners of a fixture in plan, for drawing and for obstacle tests. */
