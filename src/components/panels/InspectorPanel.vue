@@ -4,7 +4,7 @@ import { computed } from 'vue'
 
 import { fixtureDef } from '../../domain/catalog/fixtures.ts'
 import { wallLength } from '../../domain/edit.ts'
-import { wallsOf } from '../../domain/model.ts'
+import { entryOf, wallBehind, wallsOf } from '../../domain/model.ts'
 import { SERVICE_LABEL, SYSTEM_LABEL, type ConnectionEntry } from '../../domain/types.ts'
 import { useLevels } from '../../composables/useLevels.ts'
 import { useProjectStore } from '../../stores/project.ts'
@@ -52,6 +52,26 @@ const opening = computed(() =>
 )
 
 const fixtureInfo = computed(() => (fixture.value ? fixtureDef(fixture.value.type) : null))
+
+/** Only plumbing has an entry face; a light or a socket does not. */
+const hasPipes = computed(() =>
+  (fixtureInfo.value?.ports ?? []).some((port) => port.kind !== 'power'),
+)
+
+const wantsBack = computed(
+  () => fixture.value !== null && entryOf(project.value, fixture.value) === 'back',
+)
+
+/** Whether back entry can actually be honoured — the appliance has to be against a wall. */
+const backedByWall = computed(
+  () => fixture.value !== null && wallBehind(project.value, fixture.value) !== null,
+)
+
+/** Walls of the room the selected fixture is in — the options it can be mounted to. */
+const fixtureRoomWalls = computed(() => {
+  const owner = project.value.rooms.find((r) => r.id === fixture.value?.roomId)
+  return owner ? wallsOf(owner) : []
+})
 
 /** The wall a fixture is anchored to, for bounding its slide. */
 const fixtureWallLength = computed(() => {
@@ -228,22 +248,29 @@ const fixtureWallLength = computed(() => {
             "
           />
         </label>
-        <NumberField
-          v-if="fixture.wallIndex !== null"
-          label="Along wall"
-          :model-value="Math.round(fixture.wallOffset)"
-          :min="0"
-          :max="Math.round(fixtureWallLength)"
-          :step="10"
-          @update:model-value="projectStore.updateFixture(fixture.id, { wallOffset: $event })"
-        />
-        <NumberField
-          label="Height"
-          :model-value="Math.round(fixture.z)"
-          :step="10"
-          @update:model-value="projectStore.updateFixture(fixture.id, { z: $event })"
-        />
-        <label class="flex items-center justify-between gap-2 py-1">
+        <label v-if="fixtureInfo.mount !== 'ceiling'" class="flex items-center justify-between gap-2 py-1">
+          <span class="text-ink-400">Mounting</span>
+          <select
+            class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+            :value="fixture.wallIndex === null ? 'free' : String(fixture.wallIndex)"
+            @change="
+              projectStore.setFixtureMounting(
+                fixture.id,
+                ($event.target as HTMLSelectElement).value === 'free'
+                  ? null
+                  : Number(($event.target as HTMLSelectElement).value),
+              )
+            "
+          >
+            <option value="free">Free-standing</option>
+            <option v-for="w in fixtureRoomWalls" :key="w.index" :value="String(w.index)">
+              Wall {{ w.index + 1 }} ({{ Math.round(w.length) }} mm)
+            </option>
+          </select>
+        </label>
+        <!-- Kept next to the mounting: both answer "how is this thing attached?", and the
+             answer to one constrains the other. -->
+        <label v-if="hasPipes" class="flex items-center justify-between gap-2 py-1">
           <span class="text-ink-400">Pipe entry</span>
           <select
             class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
@@ -266,11 +293,27 @@ const fixtureWallLength = computed(() => {
           </select>
         </label>
         <p
-          v-if="(fixture.entry ?? project.settings.connectionEntry) === 'back' && fixture.wallIndex === null"
-          class="mt-1 text-[11px] leading-relaxed text-amber-300/80"
+          v-if="hasPipes && wantsBack && !backedByWall"
+          class="mb-1 text-[11px] leading-relaxed text-amber-300/80"
         >
-          Not against a wall, so this one connects from below regardless.
+          Not against a wall, so this one connects from below regardless. Mount it to a wall,
+          or push it back against one.
         </p>
+        <NumberField
+          v-if="fixture.wallIndex !== null"
+          label="Along wall"
+          :model-value="Math.round(fixture.wallOffset)"
+          :min="0"
+          :max="Math.round(fixtureWallLength)"
+          :step="10"
+          @update:model-value="projectStore.updateFixture(fixture.id, { wallOffset: $event })"
+        />
+        <NumberField
+          label="Height"
+          :model-value="Math.round(fixture.z)"
+          :step="10"
+          @update:model-value="projectStore.updateFixture(fixture.id, { z: $event })"
+        />
         <NumberField
           v-if="fixture.wallIndex === null"
           label="Rotation"

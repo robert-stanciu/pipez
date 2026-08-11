@@ -118,9 +118,22 @@ override it per appliance in the inspector:
 
 The visible difference is where the verticals are: under the appliance, or on the wall
 centreline. On the sample house, back entry moves all eight drops onto walls and adds a metre
-of pipe for the tails. It also brings a check with it — a DN100 WC will not hide inside a
-100 mm wall, so the app says so and tells you what would fix it. An appliance that is not
-against a wall cannot be fed from behind, and falls back to below rather than failing.
+of pipe for the tails.
+
+Which wall an appliance backs onto is yours to set. The **Mounting** control in the inspector
+offers free-standing or any wall of the room; switching keeps the appliance where it is and
+facing the way it faces, and only changes how it is held. It also decides how dragging
+behaves — anchored to a wall, it slides along that wall; free-standing, it moves anywhere.
+
+The catalogue's mount is only a default for placement, so an appliance you have not said
+anything about is checked geometrically: is its back against a wall? Without that, back entry
+would silently do nothing for the shower, washing machine, dishwasher and tumble dryer — the
+appliances that most often need it, and the ones the editor places free-standing. An explicit
+mounting always wins over the nearest wall, and something genuinely clear of every wall falls
+back to below and says so.
+
+It brings a check with it, too: a DN100 WC will not hide inside a 100 mm wall, so the app
+says so and tells you what would fix it.
 
 Cables are not affected: a socket is always fed from behind.
 
@@ -188,9 +201,14 @@ unreachable with the reason; and a stack is billed as a soil stack.
 
 For connection entry: back entry puts the drops on the wall centreline and below entry puts
 them under the appliance; the tail into the wall shows up as extra pipe; a per-fixture
-override beats the project default both ways; an appliance with no wall behind it falls back
-and says so while staying connected; a wall too thin to hide the pipe is reported; and
-cabling comes out identical either way.
+override beats the project default both ways; free-standing appliances get back entry too,
+not only wall-hung ones; an appliance with no wall behind it falls back and says so while
+staying connected; a wall too thin to hide the pipe is reported; and cabling comes out
+identical either way.
+
+For mounting: choosing a wall moves the connection onto *that* wall and no other; an explicit
+choice beats whichever wall happens to be nearest; and a wall-hung fixture set free-standing
+stops using the wall.
 
 For corners and strategies: no turn sharper than 45° survives anywhere in the drainage; each
 swept corner yields exactly two elbows; a joint in a graded straight run is not mistaken for

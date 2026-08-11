@@ -11,11 +11,12 @@ import { computed, ref, shallowRef } from 'vue'
 
 import { fixtureDef } from '../domain/catalog/fixtures.ts'
 import { nearestWall, offsetWall, setWallLength, translateOutline } from '../domain/edit.ts'
-import type { Vec2 } from '../domain/geometry/vec.ts'
+import { closestPointOnSegment, type Vec2 } from '../domain/geometry/vec.ts'
 import {
   findLevel,
   findRoom,
   fixtureFrame,
+  wallOf,
   roomAt,
   roomsOnLevel,
   sortedLevels,
@@ -271,12 +272,13 @@ export const useProjectStore = defineStore('project', () => {
   function moveFixtureTo(fixtureId: string, point: Vec2): void {
     const fixture = project.value.fixtures.find((f) => f.id === fixtureId)
     if (!fixture) return
-    const def = fixtureDef(fixture.type)
     // A drag stays on the storey the fixture is already on; changing floors is a deliberate
     // act, not something that should happen because two rooms overlap in plan.
     const levelId = findRoom(project.value, fixture.roomId)?.levelId ?? null
 
-    if (def.mount === 'wall') {
+    // How it is mounted *now*, not what the catalogue suggests: once the user has anchored a
+    // dishwasher to a wall, dragging it should slide along that wall.
+    if (fixture.wallIndex !== null) {
       // Wall fixtures slide along whichever wall is nearest, so a drag can move them
       // around a corner or onto the next room's wall without a separate gesture.
       const hit = nearestWall(project.value, point, 600, levelId)
@@ -289,6 +291,38 @@ export const useProjectStore = defineStore('project', () => {
       if (room) fixture.roomId = room.id
       fixture.wallIndex = null
       fixture.position = point
+    }
+    touch()
+  }
+
+  /**
+   * Anchor a fixture to one of its room's walls, or set it free-standing.
+   *
+   * The catalogue only supplies a sensible default — a basin hangs on a wall, a washing
+   * machine stands on the floor — but which wall a thing actually backs onto is the user's
+   * call, and it decides where a back-entry connection runs. Switching keeps the appliance
+   * where it is and facing the way it faces; only how it is held changes.
+   */
+  function setFixtureMounting(fixtureId: string, wallIndex: number | null): void {
+    const fixture = project.value.fixtures.find((f) => f.id === fixtureId)
+    const room = findRoom(project.value, fixture?.roomId ?? null)
+    if (!fixture || !room || fixture.wallIndex === wallIndex) return
+
+    const frame = fixtureFrame(project.value, fixture)
+    const anchor = frame ? { x: frame.origin.x, y: frame.origin.y } : fixture.position
+    checkpoint()
+
+    if (wallIndex === null) {
+      fixture.position = anchor
+      // Keep facing the same way: `out` is (-sin, cos) of the rotation.
+      if (frame) fixture.rotation = Math.atan2(-frame.out.x, frame.out.y)
+      fixture.wallIndex = null
+    } else {
+      const wall = wallOf(room, wallIndex)
+      if (!wall) return
+      const { t } = closestPointOnSegment(anchor, wall.a, wall.b)
+      fixture.wallIndex = wallIndex
+      fixture.wallOffset = t * wall.length
     }
     touch()
   }
@@ -449,6 +483,7 @@ export const useProjectStore = defineStore('project', () => {
     addFixtureAt,
     moveFixtureTo,
     moveFixtureToLevel,
+    setFixtureMounting,
     updateFixture,
     removeFixture,
     addOpeningAt,

@@ -19,6 +19,7 @@ import {
   sampleProject,
 } from '../project.ts'
 import { wallsOf } from '../model.ts'
+import { closestPointOnSegment } from '../geometry/vec.ts'
 import { branchDiameter, flowFromDu } from '../standards/en12056.ts'
 import { supplyDiameter } from '../standards/en806.ts'
 import type { FixtureType, Network, Project, Segment } from '../types.ts'
@@ -576,6 +577,45 @@ describe('appliance connection entry', () => {
     }
   })
 
+  test('back entry applies to free-standing appliances too, not just wall-hung ones', () => {
+    // The UI only anchors `mount: 'wall'` types, so a washing machine, dishwasher, shower or
+    // tumble dryer arrives free-standing. Requiring an anchor made back entry silently do
+    // nothing for exactly the appliances that most often need it.
+    const build = (entry: 'bottom' | 'back') => {
+      const project = createProject('free standing')
+      const ground = project.levels[0]
+      const room = createRoom('Utility', { x: 0, y: 0 }, 4000, 3000, ground)
+      project.rooms.push(room)
+      // Placed as the plan editor places one: a position, no wall index, backed onto wall 0.
+      project.fixtures.push(
+        createFixture(project, 'washing-machine', room.id, { position: { x: 1500, y: 0 } }),
+      )
+      project.servicePoints.push(
+        createServicePoint('wasteOutlet', { x: 3600, y: 200 }, ground, room.id),
+        createServicePoint('waterEntry', { x: 200, y: 2800 }, ground, room.id),
+      )
+      project.settings.connectionEntry = entry
+      relevel(project)
+
+      const waste = solve(project).networks.find((n) => n.system === 'waste')!
+      const wall = wallsOf(room)[0]
+      const drop = waste.segments.find((s) => s.role === 'drop')!
+      const ab = { x: wall.centerB.x - wall.centerA.x, y: wall.centerB.y - wall.centerA.y }
+      const lengthSq = ab.x * ab.x + ab.y * ab.y || 1
+      const t = Math.max(
+        0,
+        Math.min(1, ((drop.a.x - wall.centerA.x) * ab.x + (drop.a.y - wall.centerA.y) * ab.y) / lengthSq),
+      )
+      return Math.hypot(
+        drop.a.x - (wall.centerA.x + ab.x * t),
+        drop.a.y - (wall.centerA.y + ab.y * t),
+      )
+    }
+
+    expect(build('back')).toBeLessThan(2)
+    expect(build('bottom')).toBeGreaterThan(100)
+  })
+
   test('a fixture with no wall behind it falls back to bottom entry and says so', () => {
     const project = entryProject('back')
     const kitchen = project.rooms.find((r) => r.name === 'Kitchen')!
@@ -613,6 +653,92 @@ describe('appliance connection entry', () => {
     const lengthOf = (entry: 'bottom' | 'back') =>
       solve(entryProject(entry)).networks.find((n) => n.system === 'power')!.totalLength
     expect(lengthOf('back')).toBeCloseTo(lengthOf('bottom'), 6)
+  })
+})
+
+describe('choosing how an appliance is mounted', () => {
+  /** A washing machine parked in the middle of a room, as the plan editor would place it. */
+  const utility = () => {
+    const project = createProject('utility')
+    const ground = project.levels[0]
+    const room = createRoom('Utility', { x: 0, y: 0 }, 4000, 3000, ground)
+    project.rooms.push(room)
+    const machine = createFixture(project, 'washing-machine', room.id, {
+      position: { x: 2000, y: 1500 },
+    })
+    project.fixtures.push(machine)
+    project.servicePoints.push(
+      createServicePoint('wasteOutlet', { x: 3600, y: 200 }, ground, room.id),
+      createServicePoint('waterEntry', { x: 200, y: 2800 }, ground, room.id),
+    )
+    project.settings.connectionEntry = 'back'
+    return { project: relevel(project), room, machine }
+  }
+
+  const dropPoint = (project: Project) => {
+    const waste = solve(project).networks.find((n) => n.system === 'waste')!
+    return waste.segments.find((s) => s.role === 'drop')!.a
+  }
+
+  test('mounting to a wall moves the connection onto that wall, and only that wall', () => {
+    const { project, room, machine } = utility()
+
+    // Free-standing in the middle of the room: nothing to back onto, so it drains downwards.
+    expect(solve(project).warnings.some((w) => /not against a wall/.test(w.message))).toBe(true)
+
+    for (const wallIndex of [0, 1, 2, 3]) {
+      machine.wallIndex = wallIndex
+      const wall = wallsOf(room)[wallIndex]
+      const { point } = closestPointOnSegment({ x: 2000, y: 1500 }, wall.a, wall.b)
+      machine.wallOffset = Math.hypot(point.x - wall.a.x, point.y - wall.a.y)
+
+      const drop = dropPoint(project)
+      const onCentreline = closestPointOnSegment(drop, wall.centerA, wall.centerB).point
+      expect(Math.hypot(drop.x - onCentreline.x, drop.y - onCentreline.y)).toBeLessThan(2)
+    }
+  })
+
+  test('the chosen wall wins over whichever wall happens to be nearest', () => {
+    const { project, room, machine } = utility()
+    // Sitting against wall 0, but deliberately mounted to wall 3.
+    machine.position = { x: 2000, y: 60 }
+    machine.wallIndex = 3
+    machine.wallOffset = 1500
+
+    const drop = dropPoint(project)
+    const chosen = wallsOf(room)[3]
+    const nearest = wallsOf(room)[0]
+    const toChosen = closestPointOnSegment(drop, chosen.centerA, chosen.centerB).point
+    const toNearest = closestPointOnSegment(drop, nearest.centerA, nearest.centerB).point
+
+    expect(Math.hypot(drop.x - toChosen.x, drop.y - toChosen.y)).toBeLessThan(2)
+    expect(Math.hypot(drop.x - toNearest.x, drop.y - toNearest.y)).toBeGreaterThan(100)
+  })
+
+  test('a wall-hung fixture can be set free-standing and stops using the wall', () => {
+    const project = createProject('bathroom')
+    const ground = project.levels[0]
+    const room = createRoom('Bathroom', { x: 0, y: 0 }, 4000, 3000, ground)
+    project.rooms.push(room)
+    const basin = createFixture(project, 'basin', room.id, { wallIndex: 0, wallOffset: 1500 })
+    project.fixtures.push(basin)
+    project.servicePoints.push(
+      createServicePoint('wasteOutlet', { x: 3600, y: 200 }, ground, room.id),
+      createServicePoint('waterEntry', { x: 200, y: 2800 }, ground, room.id),
+    )
+    project.settings.connectionEntry = 'back'
+    relevel(project)
+
+    const anchored = dropPoint(project)
+
+    // Stood out in the room instead: no wall behind it any more.
+    basin.wallIndex = null
+    basin.position = { x: 2000, y: 1500 }
+    basin.rotation = 0
+    const free = dropPoint(project)
+
+    expect(Math.hypot(free.x - anchored.x, free.y - anchored.y)).toBeGreaterThan(100)
+    expect(solve(project).warnings.some((w) => /not against a wall/.test(w.message))).toBe(true)
   })
 })
 

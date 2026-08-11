@@ -11,6 +11,7 @@ import { edgesOf, offsetPolygon, pointInPolygon, type Edge } from './geometry/po
 import {
   add2,
   closestPointOnSegment,
+  dist2,
   scale2,
   to3,
   type Vec2,
@@ -223,6 +224,47 @@ export interface ConnectionAnchor {
 }
 
 /**
+ * How close an appliance's back has to be to a wall to count as standing against it.
+ *
+ * Enough slack for a skirting board and a service gap, not enough to catch something parked
+ * in the middle of the room.
+ */
+const AGAINST_WALL_CLEARANCE = 180
+
+/**
+ * The wall an appliance backs onto, if any.
+ *
+ * A basin is *anchored* to its wall and simply knows. A washing machine is not — it stands on
+ * the floor and is positioned freely, exactly as a real one is — so the question has to be
+ * answered geometrically: is its back against a wall? Asking only anchored fixtures would
+ * mean back entry silently did nothing for every appliance that is not wall-hung, which is
+ * most of the ones that need it.
+ */
+export function wallBehind(project: Project, fixture: Fixture): WallGeometry | null {
+  const room = findRoom(project, fixture.roomId)
+  if (!room) return null
+  if (fixture.wallIndex !== null) return wallOf(room, fixture.wallIndex)
+
+  const frame = fixtureFrame(project, fixture)
+  if (!frame) return null
+  // The frame's origin is the middle of the appliance's back face.
+  const back: Vec2 = { x: frame.origin.x, y: frame.origin.y }
+
+  let nearest: WallGeometry | null = null
+  let nearestDistance = Infinity
+  for (const wall of wallsOf(room)) {
+    const { point } = closestPointOnSegment(back, wall.centerA, wall.centerB)
+    const distance = dist2(back, point)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearest = wall
+    }
+  }
+  if (!nearest) return null
+  return nearestDistance <= nearest.thickness / 2 + AGAINST_WALL_CLEARANCE ? nearest : null
+}
+
+/**
  * Where a fixture's connection turns vertical.
  *
  * Bottom entry drops straight out of the appliance, so the vertical is directly beneath the
@@ -230,8 +272,8 @@ export interface ConnectionAnchor {
  * sits on the wall centreline behind the fixture — which is the whole visible difference: the
  * pipes are in the wall rather than under the floor in the middle of the room.
  *
- * A fixture that is not against a wall cannot be fed from behind, so it falls back to bottom
- * entry and says so.
+ * An appliance standing clear of every wall cannot be fed from behind, so it falls back to
+ * bottom entry and says so.
  */
 export function connectionAnchor(
   project: Project,
@@ -241,8 +283,7 @@ export function connectionAnchor(
   const beneath: Vec2 = { x: port.position.x, y: port.position.y }
   if (entryOf(project, fixture) !== 'back') return { plan: beneath, wall: null, fellBack: false }
 
-  const room = findRoom(project, fixture.roomId)
-  const wall = room && fixture.wallIndex !== null ? wallOf(room, fixture.wallIndex) : null
+  const wall = wallBehind(project, fixture)
   if (!wall) return { plan: beneath, wall: null, fellBack: true }
 
   // Straight back from the port to the middle of the wall behind it.
