@@ -54,6 +54,7 @@ import type {
   Project,
   RoutingWarning,
   Segment,
+  SegmentRole,
   ServicePoint,
 } from '../types.ts'
 import { absorbOffsets, sweepCorners, sweepJunctions } from './bends.ts'
@@ -600,34 +601,49 @@ export function routeWaste(
     }
     const node = graph.position(terminal.node)
 
-    /** A horizontal piece at the given level, skipped when the two ends coincide. */
-    const tail = (from: Vec2, to: Vec2, z: number) => {
-      const length = Math.hypot(to.x - from.x, to.y - from.y)
+    /**
+     * A graded piece between two plan points, skipped where the two ends coincide.
+     *
+     * Graded, not level: a connection is pipe like any other and has to fall, and drawing it
+     * flat would put a run in the drawing that holds water. The fall is the same one the rest
+     * of the branch was designed at.
+     */
+    const planRun = (from: Vec2, to: Vec2) => Math.hypot(to.x - from.x, to.y - from.y)
+    const tail = (from: Vec2, to: Vec2, topZ: number, role: SegmentRole) => {
+      const length = planRun(from, to)
       if (length <= 1) return
       segments.push({
         id: nextId(),
         system: 'waste',
-        a: { x: from.x, y: from.y, z },
-        b: { x: to.x, y: to.y, z },
+        a: { x: from.x, y: from.y, z: topZ },
+        b: { x: to.x, y: to.y, z: topZ - slope * length },
         size,
         load: terminal.load,
-        length,
-        role: 'branch',
-        slope: 0,
+        length: Math.hypot(length, slope * length),
+        role,
+        slope,
       })
     }
 
-    // Back entry: run horizontally off the appliance into the wall before turning down.
-    tail({ x: port.position.x, y: port.position.y }, anchor, port.position.z)
+    // Back entry: run horizontally off the appliance into the wall before turning down. The
+    // drop therefore starts below the appliance outlet by whatever that run has already
+    // fallen, and the piece closing the gap to the branch node has to arrive *at* the node's
+    // invert, so it starts above it by its own fall.
+    const intoWall = planRun({ x: port.position.x, y: port.position.y }, anchor)
+    const toNode = planRun(anchor, { x: node.x, y: node.y })
+    const dropTop = port.position.z - (intoWall > 1 ? slope * intoWall : 0)
+    const dropBottom = branchZ + (toNode > 1 ? slope * toNode : 0)
+
+    tail({ x: port.position.x, y: port.position.y }, anchor, port.position.z, 'tail')
 
     segments.push({
       id: nextId(),
       system: 'waste',
-      a: { x: anchor.x, y: anchor.y, z: port.position.z },
-      b: { x: anchor.x, y: anchor.y, z: branchZ },
+      a: { x: anchor.x, y: anchor.y, z: dropTop },
+      b: { x: anchor.x, y: anchor.y, z: dropBottom },
       size,
       load: terminal.load,
-      length: drop,
+      length: Math.max(0, dropTop - dropBottom),
       role: 'drop',
       slope: 1,
     })
@@ -635,7 +651,7 @@ export function routeWaste(
     // The branch node is not always exactly under the drop — with any-bearing routing the
     // lattice may put it a cell away — so close the gap rather than leaving the drop hanging
     // next to the network.
-    tail(anchor, { x: node.x, y: node.y }, branchZ)
+    tail(anchor, { x: node.x, y: node.y }, dropBottom, 'branch')
 
     /*
      * Application limits for a branch with no ventilation of its own.

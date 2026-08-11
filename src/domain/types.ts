@@ -332,7 +332,20 @@ export type FittingKind =
  * sized by the stack tables rather than the branch ones. A `collector` is the drain below the
  * stack foot, sized from its gradient rather than from its load and never smaller than DN100.
  */
-export type SegmentRole = 'branch' | 'stack' | 'drop' | 'bend' | 'vent' | 'collector'
+/**
+ * `tail` is the connection between an appliance and the pipework proper — the short run off
+ * the trap into the wall behind it, before anything turns vertical. It is graded like a
+ * branch but it lives at appliance height by definition, so the checks that keep buried
+ * drainage under the floor do not apply to it.
+ */
+export type SegmentRole =
+  | 'branch'
+  | 'tail'
+  | 'stack'
+  | 'drop'
+  | 'bend'
+  | 'vent'
+  | 'collector'
 
 export interface Segment {
   id: Id

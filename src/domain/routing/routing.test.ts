@@ -375,6 +375,10 @@ describe('swept corners', () => {
     let corners = 0
     for (const { point, segs } of junctions.values()) {
       if (segs.length !== 2) continue
+      // The rule is about what solids have to get round. A vent stub carries air the other
+      // way, and the valve on top of it screws onto a square elbow like every other one on
+      // the market.
+      if (segs.some((s) => s.role === 'vent')) continue
       // One in, one out. Two runs arriving is the outfall, not a corner.
       const at = key(point)
       if (segs.filter((s) => key(s.b) === at).length !== 1) continue
