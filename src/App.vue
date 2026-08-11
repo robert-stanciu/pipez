@@ -9,6 +9,7 @@ import InspectorPanel from './components/panels/InspectorPanel.vue'
 import ResultsPanel from './components/panels/ResultsPanel.vue'
 import PanelView from './components/panel/PanelView.vue'
 import PlanCanvas from './components/plan2d/PlanCanvas.vue'
+import ShoppingView from './components/shopping/ShoppingView.vue'
 import Scene3d from './components/view3d/Scene3d.vue'
 import { loadAutosave, saveAutosave } from './io/autosave.ts'
 import { usePlanStore } from './stores/plan.ts'
@@ -68,8 +69,10 @@ watchDebounced(() => projectStore.project, (project) => void saveAutosave(projec
       </aside>
 
       <div ref="centre" class="flex min-w-0 flex-1">
-        <!-- The panel takes the whole middle; the plan and 3D share it when it does not. -->
+        <!-- The panel and the shopping list each take the whole middle; the plan and 3D share
+             it when neither does. -->
         <PanelView v-if="view.workspace === 'panel'" class="min-w-0 flex-1" />
+        <ShoppingView v-else-if="view.workspace === 'shopping'" class="min-w-0 flex-1" />
 
         <template v-else>
           <div class="min-w-0" :style="{ flexBasis: `${split * 100}%` }">

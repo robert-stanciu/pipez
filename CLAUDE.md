@@ -143,6 +143,16 @@ on any legitimate improvement to the router.
 stops being straight and ends where it resumes — because a mis-oriented bend still looks like
 a bend from most angles.
 
-The sample project ships with live warnings on purpose (two basins past the EN 12056 unvented
-limit for DN40, a hot dead leg over the EN 806 limit), so validation is visible in the UI. Do
-not "fix" the sample to silence them.
+The sample project is the real house on `A02.Plan parter` / `A03.Plan etaj` — a P+1E, 15.20 ×
+8.95 m, with the upper storey set back onto gridlines 3–6. It is deliberately a *hard* case:
+the two bathrooms are not stacked, so the upstairs soil stack has to find a wall that exists
+on both storeys, and the kitchen is 17 m of branch from the outlet. Do not simplify it to make
+the engine's life easier.
+
+It ships with live warnings on purpose (branches past the EN 12056 unvented limits, hot dead
+legs over the EN 806 limit), so validation is visible in the UI. Do not "fix" the sample to
+silence them. Warnings are fine; `error` severity is not — the sample must stay solvable.
+
+Two tests are coupled to the sample's contents rather than to invariants and will need
+updating if a room is renamed: `routing.test.ts` looks up `Bucătărie` and the first-floor
+`Baie`, and `panel.test.ts` enumerates the electrical fixture types.

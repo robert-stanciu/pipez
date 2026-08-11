@@ -14,7 +14,15 @@ export type Tool =
   | { kind: 'opening'; opening: 'door' | 'window' }
 
 /** Which workspace fills the middle of the screen. */
-export type Workspace = 'layout' | 'panel'
+export type Workspace = 'layout' | 'panel' | 'shopping'
+
+export const WORKSPACE_LABEL: Record<Workspace, string> = {
+  layout: 'Layout',
+  panel: 'Panel',
+  shopping: 'Shopping',
+}
+
+export const WORKSPACES: Workspace[] = ['layout', 'panel', 'shopping']
 
 export const useViewStore = defineStore('view', () => {
   const tool = ref<Tool>({ kind: 'select' })
@@ -22,6 +30,10 @@ export const useViewStore = defineStore('view', () => {
   /**
    * The panel gets the whole screen rather than a corner of the layout. Wiring and board
    * layout answer different questions and neither is served by sharing the space.
+   *
+   * The shopping list is the same argument again: it is read away from the drawing, at a
+   * counter or in a van, and what it needs is width for the merchant links rather than a
+   * corner of a plan.
    */
   const workspace = ref<Workspace>('layout')
   const setWorkspace = (next: Workspace) => {

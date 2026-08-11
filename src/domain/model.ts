@@ -19,6 +19,7 @@ import {
 } from './geometry/vec.ts'
 import type {
   ConnectionEntry,
+  ServicePoint,
   Fixture,
   Level,
   Opening,
@@ -312,6 +313,20 @@ export function fixtureFootprint(project: Project, fixture: Fixture): Vec2[] {
 
 export const servicePointOf = (project: Project, kind: string) =>
   project.servicePoints.find((s) => s.kind === kind) ?? null
+
+/**
+ * All the points of one kind.
+ *
+ * Drainage can leave a building in several places — a kitchen at one corner and a bathroom at
+ * another have no business meeting inside just to leave together — and a building can have
+ * more than one consumer unit. Water comes in once.
+ */
+export const servicePointsOf = (project: Project, kind: string): ServicePoint[] =>
+  project.servicePoints.filter((s) => s.kind === kind)
+
+/** Whether a kind may be placed more than once. */
+export const allowsMultiple = (kind: string): boolean =>
+  kind === 'wasteOutlet' || kind === 'electricalPanel'
 
 /** Absolute position of a service point. */
 export const servicePointPosition = (

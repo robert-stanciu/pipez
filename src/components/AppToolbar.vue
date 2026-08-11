@@ -9,7 +9,7 @@ import { usePlanStore } from '../stores/plan.ts'
 import { useProjectStore } from '../stores/project.ts'
 import { useRoutingStore } from '../stores/routing.ts'
 import { useSelectionStore } from '../stores/selection.ts'
-import { useViewStore } from '../stores/view.ts'
+import { useViewStore, WORKSPACE_LABEL, WORKSPACES } from '../stores/view.ts'
 
 const projectStore = useProjectStore()
 const routing = useRoutingStore()
@@ -72,10 +72,10 @@ const buttonClass =
     <!-- Which workspace fills the screen. -->
     <div class="flex items-center gap-0.5 rounded border border-ink-700 bg-ink-850 p-0.5">
       <button
-        v-for="mode in (['layout', 'panel'] as const)"
+        v-for="mode in WORKSPACES"
         :key="mode"
         type="button"
-        class="rounded px-2.5 py-0.5 capitalize"
+        class="rounded px-2.5 py-0.5"
         :class="
           view.workspace === mode
             ? 'bg-accent/20 text-ink-100'
@@ -83,7 +83,7 @@ const buttonClass =
         "
         @click="view.setWorkspace(mode)"
       >
-        {{ mode === 'layout' ? 'Layout' : 'Panel' }}
+        {{ WORKSPACE_LABEL[mode] }}
       </button>
     </div>
 

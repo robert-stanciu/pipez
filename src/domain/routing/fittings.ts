@@ -5,7 +5,16 @@
  */
 
 import { dist3, type Vec3 } from '../geometry/vec.ts'
-import type { BomLine, Circuit, Fitting, Network, Segment, SystemKind } from '../types.ts'
+import { supplyPipeLabel } from '../standards/en806.ts'
+import type {
+  BomLine,
+  Circuit,
+  Fitting,
+  Network,
+  Segment,
+  SupplyMaterial,
+  SystemKind,
+} from '../types.ts'
 import { angleBetween } from './bends.ts'
 
 
@@ -230,6 +239,14 @@ const STACK_LABEL: Record<SystemKind, string> = {
   power: 'Cable riser',
 }
 
+/** The stub between the top of a drain and its air admittance valve. */
+const VENT_LABEL: Record<SystemKind, string> = {
+  cold: 'Cold water pipe',
+  hot: 'Hot water pipe',
+  waste: 'Vent pipe',
+  power: 'Cable',
+}
+
 const FITTING_LABEL: Record<Fitting['kind'], string> = {
   elbow: 'Elbow 90°',
   tee: 'Tee',
@@ -237,11 +254,23 @@ const FITTING_LABEL: Record<Fitting['kind'], string> = {
   coupling: 'Coupling',
   trap: 'Trap',
   stack: 'Stack connector',
+  aav: 'Air admittance valve',
   terminal: 'Terminal connection',
 }
 
 /** Roll the networks up into an orderable list. */
-export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
+/**
+ * Roll the networks up into an orderable list.
+ *
+ * Only what is routed: pipe by the metre, fittings by the piece, a breaker per circuit. The
+ * board's own parts — enclosure, arrester, residual current devices, blanks — are counted in
+ * the shopping list, which knows the ratings the devices are actually sold in.
+ */
+export function buildBom(
+  networks: Network[],
+  circuits: Circuit[],
+  material: SupplyMaterial = 'copper',
+): BomLine[] {
   const lines = new Map<string, BomLine>()
 
   const bump = (line: Omit<BomLine, 'quantity'>, quantity: number) => {
@@ -256,18 +285,35 @@ export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
       // The short leg between a pair of 45° bends is part of the fittings, which are counted
       // below — billing it as pipe as well would order the same 150 mm twice.
       if (segment.role === 'bend') continue
-      const noun = segment.role === 'stack' ? STACK_LABEL : PIPE_LABEL
+      // A vent stub is the same pipe, but it is bought and fitted with the valve rather than
+      // with the drain, so it is worth its own line on the order.
+      const noun =
+        segment.role === 'stack' ? STACK_LABEL : segment.role === 'vent' ? VENT_LABEL : PIPE_LABEL
+      const circuit = segment.circuitId
+        ? circuits.find((c) => c.id === segment.circuitId)
+        : undefined
       const item =
         network.system === 'power'
-          ? // Line, neutral and protective earth — three cores on every domestic circuit.
-            `${noun.power} 3 × ${segment.size} mm²`
-          : `${noun[network.system]} DN${segment.size}`
+          ? // Cores are the circuit's own count: three on a single-phase final circuit, five
+            // once it is taken across all three lines. Billing every cable as three would
+            // order the wrong drum for the cooker.
+            `${noun.power} ${circuit?.cores ?? 3} × ${segment.size} mm²`
+          : network.system === 'waste'
+            ? `${noun[network.system]} DN${segment.size}`
+            : // Supply is bought by outside diameter and by material — a Ø20 PP-R and a 15 mm
+              // copper are the same connection, and only one of them is on the shelf here.
+              `${noun[network.system]} ${supplyPipeLabel(material, segment.size)}`
       bump({ system: network.system, item, unit: 'm' }, segment.length / 1000)
     }
     for (const fitting of network.fittings) {
       // Cables have no fittings worth ordering — the run is continuous to the outlet.
       if (network.system === 'power') continue
-      const suffix = fitting.size > 0 ? ` DN${fitting.size}` : ''
+      const suffix =
+        fitting.size > 0
+          ? fitting.system === 'waste'
+            ? ` DN${fitting.size}`
+            : ` ${supplyPipeLabel(material, fitting.size)}`
+          : ''
       // Bends and tees are bought by their angle: a 45° and a 90° are different parts, and on
       // a drain an oblique tee and a square one are not interchangeable at all.
       const label =
@@ -281,8 +327,16 @@ export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
   }
 
   for (const circuit of circuits) {
+    // Curve and breaking capacity are what distinguish one 16 A breaker from another on the
+    // shelf, so they belong on the line you would hand to a merchant.
+    const rating = `${circuit.curve ?? 'C'}${circuit.breakerAmps}`
+    const poles = circuit.poles === 3 ? '3P+N ' : ''
     bump(
-      { system: 'power', item: `MCB ${circuit.breakerAmps} A — ${circuit.name}`, unit: 'pc' },
+      {
+        system: 'power',
+        item: `MCB ${poles}${rating} · ${(circuit.icn ?? 6000) / 1000} kA — ${circuit.name}`,
+        unit: 'pc',
+      },
       1,
     )
   }

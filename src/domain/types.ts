@@ -244,6 +244,40 @@ export interface DrainageSettings {
   maxSlope: number
 }
 
+/**
+ * What the pressurised pipework is made of.
+ *
+ * This is not decoration: each material is sold in its own ladder of **outside** diameters
+ * with its own bore, and EN 806-3 gives a separate sizing table for each. A Romanian house is
+ * almost always PP-R or multilayer composite; copper is the standard's reference material and
+ * PE-X is the table the two plastics above borrow their capacities from.
+ */
+export type SupplyMaterial = 'copper' | 'PPR' | 'PEX-AL-PEX' | 'PE-X'
+
+/**
+ * Where the horizontal water distribution lives.
+ *
+ * `ceiling` runs it in the ceiling void and drops to each draw-off point: the slab is never
+ * broken into and the pipe stays reachable, at the cost of a long drop to a bath filler or a
+ * cistern.
+ *
+ * `floor` runs it in the floor build-up and rises to each point, which is what a PP-R or
+ * composite job in Romania usually is — short runs to sanitaryware, and the pipe goes in with
+ * the screed that is being laid anyway. Anything high up pays for it on the way back.
+ */
+export type SupplyRoute = 'ceiling' | 'floor'
+
+export interface SupplySettings {
+  material: SupplyMaterial
+  route: SupplyRoute
+  /**
+   * Flow pressure the incoming main can be relied on to deliver at the water entry, kPa.
+   * Everything the installation spends — the climb to the top floor and the friction along
+   * the way — comes out of this, and EN 806-3 §4.3 wants 100 kPa still left at every tap.
+   */
+  entryPressureKpa: number
+}
+
 export interface ProjectSettings {
   /** Defaults applied to newly created rooms and walls. */
   wallThickness: number
@@ -261,6 +295,7 @@ export interface ProjectSettings {
   electrical: ElectricalSettings
   standards: 'EN'
   drainage: DrainageSettings
+  supply: SupplySettings
 }
 
 export interface Project {
@@ -280,14 +315,24 @@ export interface Project {
 
 /* ------------------------------------------------------------ routing output */
 
-export type FittingKind = 'elbow' | 'tee' | 'reducer' | 'coupling' | 'trap' | 'stack' | 'terminal'
+export type FittingKind =
+  | 'elbow'
+  | 'tee'
+  | 'reducer'
+  | 'coupling'
+  | 'trap'
+  | 'stack'
+  | 'terminal'
+  /** Air admittance valve — lets air into the stack, never lets anything out. */
+  | 'aav'
 
 /**
  * What a run is doing, which changes both how it is sized and what it is called on the
  * schedule. A `stack` crosses a storey — a soil stack, a rising main, a cable riser — and is
- * sized by the stack tables rather than the branch ones.
+ * sized by the stack tables rather than the branch ones. A `collector` is the drain below the
+ * stack foot, sized from its gradient rather than from its load and never smaller than DN100.
  */
-export type SegmentRole = 'branch' | 'stack' | 'drop' | 'bend'
+export type SegmentRole = 'branch' | 'stack' | 'drop' | 'bend' | 'vent' | 'collector'
 
 export interface Segment {
   id: Id
@@ -342,8 +387,62 @@ export type Phase = 'L1' | 'L2' | 'L3'
  */
 export type SupplySystem = 'single-phase' | 'three-phase'
 
+/**
+ * Where the horizontal cable runs live.
+ *
+ * DIN 18015-3 gives a permitted band near the ceiling and another near the floor, and both
+ * are used in practice: ceiling routing suits a slab you would rather not chase, floor
+ * routing suits a screed that is going down anyway and puts the runs near the sockets.
+ */
+export type CableRoute = 'ceiling' | 'floor'
+
+/**
+ * How the installation is earthed.
+ *
+ * Romanian distribution is normally TN-C up to the boundary and either TN-C-S or TT inside.
+ * The choice decides what protects against an insulation fault: on TN the fault current is
+ * large enough for the breaker to clear it, on TT it is limited by two electrodes in series
+ * and the residual current device is the only thing that will ever trip.
+ */
+export type EarthingSystem = 'TN-S' | 'TN-C-S' | 'TT'
+
+/**
+ * Reference installation method, HD 60364-5-52 Table B.52.4. A1/A2 are conductors in a
+ * conduit in a thermally insulated wall, B1/B2 in a conduit on or chased into a wall, C
+ * clipped direct.
+ */
+export type InstallationMethod = 'A1' | 'A2' | 'B1' | 'B2' | 'C'
+
+/** Trip curve, EN 60898-1: B trips at 3–5 × In, C at 5–10 ×. */
+export type McbCurve = 'B' | 'C'
+
+/**
+ * Residual current device type, IEC 62423 / HD 60364-5-53. AC responds to sinusoidal
+ * residual current only and is no longer accepted for circuits with electronic loads; A adds
+ * pulsating d.c., F adds the composite waveform a single-phase inverter drive produces, B
+ * adds smooth d.c.
+ */
+export type RcdType = 'A' | 'F' | 'B'
+
+/** Surge protection fitted at the origin, HD 60364-5-534. */
+export type SurgeProtection = 'none' | 'type-1' | 'type-2' | 'type-1+2'
+
+/** The surge protective device as it sits on the rail. */
+export interface SpdSpec {
+  kind: SurgeProtection
+  /** Modules it occupies, immediately after the main switch. */
+  modules: number
+  /** Protection level, kV — what the device lets through to the installation. */
+  upKv: number
+  /** Nominal discharge current, kA (8/20 µs). */
+  inKa: number
+  /** Backup overcurrent device, amps, where the incomer is too large to serve as one. */
+  backupBreakerAmps: number | null
+}
+
 export interface ElectricalSettings {
   supply: SupplySystem
+  cableRoute: CableRoute
   /** Line-to-neutral, volts. */
   voltage: number
   /** Line-to-line, volts. Only meaningful on a three-phase supply. */
@@ -352,17 +451,34 @@ export interface ElectricalSettings {
   mainBreakerAmps: number
   /** Circuits per residual current device before another one is added. */
   circuitsPerRcd: number
+  /**
+   * Added after the first release, so a file written before them simply gets the defaults in
+   * `standards/electrical.ts` — TN-C-S, method B1, a Type 2 surge arrester and rails of
+   * twelve, which is what a new Romanian domestic board is.
+   */
+  earthing?: EarthingSystem
+  installationMethod?: InstallationMethod
+  surgeProtection?: SurgeProtection
+  /** Modules on one rail. Romanian enclosures are built in rows of twelve or eighteen. */
+  modulesPerRow?: 12 | 18
 }
 
 export interface Circuit {
   id: Id
+  /** The consumer unit this circuit starts from. */
+  panelId: Id
   kind: ElectricalCircuitKind
   name: string
   /** Fixtures served by this circuit. */
   fixtureIds: Id[]
   breakerAmps: number
+  /** Trip curve of the breaker, and the short-circuit current it can break, amps. */
+  curve: McbCurve
+  icn: number
   /** Conductor cross-section, mm². */
   cableMm2: number
+  /** Protective conductor cross-section, HD 60364-5-54 Table 54.2, mm². */
+  peMm2: number
   totalWatts: number
   rcdProtected: boolean
 
@@ -382,7 +498,22 @@ export interface Circuit {
   diversifiedCurrent: number
   /** Routed length of the longest run on this circuit, mm. */
   routeLength: number
+  /**
+   * Volt drop at the furthest point of utilisation, measured **from the origin of the
+   * installation** — so a circuit on a sub-board carries its submain's drop as well. That is
+   * the figure HD 60364-5-52 Annex G sets the limit against.
+   */
   voltDropPercent: number
+  /** The circuit's own share of it, from its board to the furthest terminal. */
+  circuitDropPercent: number
+  /** Reference method the conductor was sized by. */
+  installationMethod: InstallationMethod
+  /** Circuits bunched with this one on its busiest length of chase, this one included. */
+  groupedWith: number
+  /** Grouping factor Cg for that count, HD 60364-5-52 Table B.52.17. */
+  groupingFactor: number
+  /** Current-carrying capacity after derating: Iz = It · Ca · Cg · Ci, amps. */
+  currentCapacity: number
   /** Which residual current device this sits behind. */
   rcdGroup: number
 }
@@ -410,6 +541,8 @@ export interface RcdGroup {
   index: number
   /** Trip current, milliamps. */
   sensitivity: number
+  /** Waveform the device can detect — 30 mA on its own is not a specification. */
+  type: RcdType
   poles: 2 | 4
   circuitIds: Id[]
   /** Modules this device occupies on the rail. */
@@ -428,16 +561,34 @@ export interface PanelWay {
  * behind which residual current device, on which phase.
  */
 export interface PanelDesign {
+  /** The service point this board is. */
+  id: Id
+  name: string
+  levelId: Id
+  /** The board the incoming supply lands on; the others are fed from it. */
+  isMain: boolean
+  /** Conductor feeding a sub-board from the main one, mm². Null on the main board. */
+  submainMm2: number | null
+  submainLength: number
   supply: SupplySystem
   mainBreakerAmps: number
   /** Modules the main switch occupies. */
   mainSwitchModules: number
+  /** Surge arrester sitting immediately downstream of it, or null where none is fitted. */
+  spd: SpdSpec | null
+  /** How this board is earthed, and the main protective bonding conductor it needs, mm². */
+  earthing: EarthingSystem
+  mainBondingMm2: number
   rcdGroups: RcdGroup[]
   ways: PanelWay[]
   /** Total modules used, and the next standard enclosure that holds them. */
   modulesUsed: number
   enclosureModules: number
   rows: number
+  /** Modules on one rail, which is what the row packing is done against. */
+  modulesPerRow: number
+  /** Circuit-count factor applied to the maximum demand, IEC Electrical Installation Guide. */
+  ks: number
   /** Diversified load carried by each line. */
   phaseLoad: Record<Phase, number>
   /** Spread between the busiest and quietest line, as a percentage of the mean. */
@@ -451,8 +602,8 @@ export interface PanelDesign {
 export interface RoutingResult {
   networks: Network[]
   circuits: Circuit[]
-  /** Null until there is a consumer unit and something to put in it. */
-  panel: PanelDesign | null
+  /** One design per consumer unit; empty until there is a board with something in it. */
+  panels: PanelDesign[]
   warnings: RoutingWarning[]
   bom: BomLine[]
   stats: {
@@ -465,7 +616,7 @@ export interface RoutingResult {
 export const EMPTY_RESULT: RoutingResult = {
   networks: [],
   circuits: [],
-  panel: null,
+  panels: [],
   warnings: [],
   bom: [],
   stats: { solveMs: 0, graphNodes: 0, graphEdges: 0 },

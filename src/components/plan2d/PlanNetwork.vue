@@ -124,6 +124,35 @@ const elbows = computed(() =>
     ),
 )
 
+/**
+ * Air admittance valves.
+ *
+ * Drawn as a ring with an arrow pointing into it, because that is exactly what the valve
+ * does: it lets air in when a discharge drags the pressure down, and shuts against anything
+ * trying to come the other way. On a plan it needs to be told apart from the stack it sits
+ * on at a glance — this is a thing on the wall above the pipe, not another pipe.
+ */
+const valves = computed(() =>
+  routing.result.networks
+    .filter((network) => view.isSystemVisible(network.system))
+    .flatMap((network) =>
+      network.fittings.flatMap((fitting) => {
+        if (fitting.kind !== 'aav') return []
+        if (!storeyContains(levels.active.value, fitting.position.z, fitting.position.z)) return []
+        const radius = Math.max(90, fitting.size * 0.9)
+        return [
+          {
+            key: fitting.id,
+            system: network.system,
+            x: fitting.position.x,
+            y: -fitting.position.y,
+            radius,
+          },
+        ]
+      }),
+    ),
+)
+
 /** Risers and drops — the parts of the network that go up or down. */
 const verticals = computed(() =>
   visible.value.flatMap((system) =>
@@ -172,6 +201,31 @@ const verticals = computed(() =>
       stroke-linecap="round"
       opacity="0.85"
     />
+
+    <!-- The valve at the top of a drain: a ring with the air arrow running into it. -->
+    <g v-for="valve in valves" :key="valve.key">
+      <circle
+        :cx="valve.x"
+        :cy="valve.y"
+        :r="valve.radius"
+        fill="#0a0e14"
+        :stroke="SYSTEM_COLOR[valve.system]"
+        stroke-width="26"
+        opacity="0.95"
+      />
+      <path
+        :d="`M ${valve.x - valve.radius * 1.9} ${valve.y} H ${valve.x - valve.radius * 0.2}
+             M ${valve.x - valve.radius * 0.75} ${valve.y - valve.radius * 0.5}
+             L ${valve.x - valve.radius * 0.2} ${valve.y}
+             L ${valve.x - valve.radius * 0.75} ${valve.y + valve.radius * 0.5}`"
+        fill="none"
+        :stroke="SYSTEM_COLOR[valve.system]"
+        stroke-width="24"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        opacity="0.95"
+      />
+    </g>
 
     <!-- A drop is a ring; a stack passing through the storey gets a filled centre and a
          cross, the conventional way to say "this continues to the floors above and below". -->

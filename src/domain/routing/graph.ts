@@ -112,6 +112,22 @@ export class RouteGraph {
     return id
   }
 
+  /**
+   * A free edge with no geometry of its own.
+   *
+   * Used to tie several real roots — three drain outlets, two consumer units — to one virtual
+   * root, so a single tree search can decide which of them each terminal should belong to
+   * rather than the caller guessing. Zero cost and zero length, so it never shows up in a
+   * route's price or its measured run.
+   */
+  connectVirtual(a: number, b: number): number {
+    if (a === b) return -1
+    const id = this.edgeSeq++
+    this.adj[a].push({ to: b, cost: 0, length: 0, dir: DIR_NONE, id })
+    this.adj[b].push({ to: a, cost: 0, length: 0, dir: DIR_NONE, id })
+    return id
+  }
+
   position(index: number): Vec3 {
     return this.nodes[index]
   }

@@ -2,16 +2,36 @@
 
 import { SYSTEM_LABEL } from '../domain/types.ts'
 import type { Project, RoutingResult } from '../domain/types.ts'
-import { download } from './projectFile.ts'
+import { download, slug } from './projectFile.ts'
 
-/** Quote a field only when it needs it, so the output stays readable in a text editor. */
+/**
+ * Semicolons, and numbers with a comma for a decimal mark.
+ *
+ * A comma-delimited file with dot decimals is only "the" CSV format in a locale that uses a
+ * dot for decimals. Romanian — like most of continental Europe — writes 12,5 and therefore
+ * takes `;` as its list separator, so Excel opens a comma-delimited file with the whole
+ * schedule stacked in column A and every length silently mangled. Writing the file the way
+ * the reader expects is the only version of this that opens correctly by double-clicking,
+ * and the `sep=` hint some tools use is a Microsoft extension the rest ignore.
+ */
+const DELIMITER = ';'
+
+/**
+ * Quote a field only when it needs it, so the output stays readable in a text editor.
+ *
+ * With a semicolon between the fields a comma inside one is harmless, which is what lets the
+ * decimal mark be a comma at all: only the delimiter, a quote and a newline force quoting.
+ * The swap catches a value already rounded to a string as well as a raw number, so a length
+ * printed as `12.4` upstream still lands in the file as `12,4`.
+ */
 const cell = (value: string | number): string => {
-  const text = String(value)
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+  const raw = String(value)
+  const text = /^-?\d+\.\d+$/.test(raw) ? raw.replace('.', ',') : raw
+  return /[";\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
 const toCsv = (rows: Array<Array<string | number>>): string =>
-  rows.map((row) => row.map(cell).join(',')).join('\n')
+  rows.map((row) => row.map(cell).join(DELIMITER)).join('\n')
 
 export function bomCsv(project: Project, result: RoutingResult): string {
   const rows: Array<Array<string | number>> = [
@@ -24,16 +44,18 @@ export function bomCsv(project: Project, result: RoutingResult): string {
     rows.push([SYSTEM_LABEL[line.system], line.item, line.quantity, line.unit])
   }
 
-  const panel = result.panel
-  if (panel) {
+  for (const panel of result.panels) {
+    rows.push([], [`Board — ${panel.name}${panel.isMain ? ' (main)' : ''}`])
     rows.push(
-      [],
       ['Supply', panel.supply === 'three-phase' ? '400 V 3~ + N' : '230 V 1~'],
       ['Main switch (A)', panel.mainBreakerAmps],
       ['Maximum demand per line (A)', panel.maximumDemand.toFixed(1)],
       ['Line balance (A apart)', panel.imbalanceAmps.toFixed(1)],
       ['Enclosure (modules)', `${panel.modulesUsed} of ${panel.enclosureModules}`],
     )
+    if (!panel.isMain && panel.submainMm2) {
+      rows.push(['Submain', `${panel.submainMm2} mm² over ${(panel.submainLength / 1000).toFixed(1)} m`])
+    }
     for (const phase of ['L1', 'L2', 'L3'] as const) {
       if (panel.supply === 'single-phase' && phase !== 'L1') continue
       rows.push([`Load on ${phase} (A)`, panel.phaseLoad[phase].toFixed(1)])
@@ -60,8 +82,9 @@ export function bomCsv(project: Project, result: RoutingResult): string {
         'Outlets',
       ],
     )
-    const ways = panel ? panel.ways.map((way) => way.circuit) : result.circuits
-    ways.forEach((circuit, index) => {
+    const ways = result.panels.flatMap((panel) => panel.ways.map((way) => way.circuit))
+    const scheduled = ways.length > 0 ? ways : result.circuits
+    scheduled.forEach((circuit, index) => {
       rows.push([
         index + 1,
         circuit.name,
@@ -92,6 +115,5 @@ export function bomCsv(project: Project, result: RoutingResult): string {
 }
 
 export function downloadBom(project: Project, result: RoutingResult): void {
-  const name = project.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'project'
-  download(`${name}-bom.csv`, bomCsv(project, result), 'text/csv;charset=utf-8')
+  download(`${slug(project.name)}-bom.csv`, bomCsv(project, result), 'text/csv;charset=utf-8')
 }

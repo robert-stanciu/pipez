@@ -7,8 +7,14 @@ import {
   SYSTEM_KINDS,
   SYSTEM_LABEL,
   type BomLine,
+  type CableRoute,
   type ConnectionEntry,
   type DrainageStrategy,
+  type SupplyMaterial,
+  type SupplyRoute,
+  type EarthingSystem,
+  type InstallationMethod,
+  type SurgeProtection,
   type SupplySystem,
 } from '../../domain/types.ts'
 import { useProjectStore } from '../../stores/project.ts'
@@ -209,6 +215,96 @@ function focusWarning(fixtureId?: string): void {
         :step="1"
         @update:model-value="projectStore.updateElectrical({ circuitsPerRcd: $event })"
       />
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Earthing</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.electrical.earthing ?? 'TN-C-S'"
+          @change="
+            projectStore.updateElectrical({
+              earthing: ($event.target as HTMLSelectElement).value as EarthingSystem,
+            })
+          "
+        >
+          <option value="TN-C-S">TN-C-S</option>
+          <option value="TN-S">TN-S</option>
+          <option value="TT">TT</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        {{
+          (projectStore.project.settings.electrical.earthing ?? 'TN-C-S') === 'TT'
+            ? 'The installation makes its own earth, so a 30 mA device is the only thing standing between a fault and the person touching it — and the electrode resistance has to be measured, not assumed.'
+            : 'The supply brings the earth in, so protective bonding to the water, gas and structural steel is what makes it work. Protective conductors are sized from HD 60364-5-54.'
+        }}
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Wiring method</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.electrical.installationMethod ?? 'B1'"
+          @change="
+            projectStore.updateElectrical({
+              installationMethod: ($event.target as HTMLSelectElement).value as InstallationMethod,
+            })
+          "
+        >
+          <option value="B1">B1 — in conduit</option>
+          <option value="B2">B2 — in trunking</option>
+          <option value="A1">A1 — in insulation</option>
+          <option value="A2">A2 — sheathed, insulated</option>
+          <option value="C">C — clipped direct</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        Reference method from HD 60364-5-52 — what a cable may carry depends on how it gets rid
+        of its heat. Circuits sharing a chase are derated for the company they keep.
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Surge protection</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.electrical.surgeProtection ?? 'type-2'"
+          @change="
+            projectStore.updateElectrical({
+              surgeProtection: ($event.target as HTMLSelectElement).value as SurgeProtection,
+            })
+          "
+        >
+          <option value="type-2">Type 2</option>
+          <option value="type-1+2">Type 1+2</option>
+          <option value="type-1">Type 1</option>
+          <option value="none">None</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        A Type 2 arrester at the board is what HD 60364-4-44 expects of a house on an overhead
+        or mixed supply. It sits in front of the residual current devices: a discharge to earth
+        behind one would trip the house every storm.
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Cables run</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.electrical.cableRoute"
+          @change="
+            projectStore.updateElectrical({
+              cableRoute: ($event.target as HTMLSelectElement).value as CableRoute,
+            })
+          "
+        >
+          <option value="ceiling">Along the ceiling</option>
+          <option value="floor">Under the floor</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        {{
+          projectStore.project.settings.electrical.cableRoute === 'floor'
+            ? 'Circuits are distributed in the screed and come up the wall to each point. Shorter runs to sockets, longer ones to the lights.'
+            : 'Circuits are distributed under the ceiling and drop down the wall to each point. Shorter runs to the lights, longer ones to the sockets.'
+        }}
+        Drops stay inside the permitted wall zones either way.
+      </p>
       <p class="mt-1 text-[11px] leading-relaxed text-ink-400">
         400 V between lines and {{ projectStore.project.settings.electrical.voltage }} V to
         neutral — the same system older drawings call 380/220 V. Set an appliance to three
@@ -242,6 +338,73 @@ function focusWarning(fixtureId?: string): void {
             : 'Every run is parallel to a wall.'
         }}
         Turns sharper than 45° are always built from a pair of 45° bends.
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Water runs</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.supply.route"
+          @change="
+            projectStore.updateSettings({
+              supply: {
+                ...projectStore.project.settings.supply,
+                route: ($event.target as HTMLSelectElement).value as SupplyRoute,
+              },
+            })
+          "
+        >
+          <option value="ceiling">Along the ceiling</option>
+          <option value="floor">Under the floor</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        {{
+          projectStore.project.settings.supply.route === 'floor'
+            ? 'Cold and hot are distributed in the floor build-up and rise up the wall to each point — short runs to sanitaryware, and the pipe goes in with the screed. Anything high up pays for it on the way back.'
+            : 'Cold and hot are distributed in the ceiling void and drop down the wall to each point. The slab is never broken into and the pipe stays reachable.'
+        }}
+        Both follow the same choice, and stay paired.
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Water pipe</span>
+        <select
+          class="w-28 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="projectStore.project.settings.supply.material"
+          @change="
+            projectStore.updateSettings({
+              supply: {
+                ...projectStore.project.settings.supply,
+                material: ($event.target as HTMLSelectElement).value as SupplyMaterial,
+              },
+            })
+          "
+        >
+          <option value="PPR">PP-R</option>
+          <option value="PEX-AL-PEX">PEX-AL-PEX</option>
+          <option value="PE-X">PE-X</option>
+          <option value="copper">Copper</option>
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        Sizes are the outside diameters that material is sold in, and capacity follows the
+        bore rather than the label — a Ø20 PP-R and a 15 mm copper are the same connection.
+      </p>
+      <NumberField
+        label="Pressure at the entry"
+        suffix="kPa"
+        :model-value="projectStore.project.settings.supply.entryPressureKpa"
+        :min="50"
+        :max="1000"
+        :step="10"
+        @update:model-value="
+          projectStore.updateSettings({
+            supply: { ...projectStore.project.settings.supply, entryPressureKpa: $event },
+          })
+        "
+      />
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        What the main can be relied on to deliver. The climb to the top floor and the friction
+        along the way come out of it, and EN 806-3 wants 100 kPa still left at every tap.
       </p>
       <label class="flex items-center justify-between py-1">
         <span class="text-ink-400">Appliance entry</span>

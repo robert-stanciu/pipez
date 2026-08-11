@@ -96,10 +96,34 @@ const bends = computed(() =>
   }),
 )
 
+/**
+ * Air admittance valves, as the squat cap they are.
+ *
+ * Wider than the pipe and short, sitting on top of the stub — which is what you see on site,
+ * and enough to tell it apart from the tees and couplings around it.
+ */
+const valves = computed(() =>
+  shownFittings.value.flatMap((fitting) => {
+    if (fitting.kind !== 'aav') return []
+    const radius = fittingRadius(fitting) * 2.2
+    const height = fittingRadius(fitting) * 3
+    const seat = toScene(fitting.position)
+    return [
+      {
+        key: fitting.id,
+        system: fitting.system,
+        // Seated on the top of its stub rather than centred on it.
+        position: new Vector3(seat.x, seat.y + height / 2, seat.z),
+        scale: new Vector3(radius, height, radius),
+      },
+    ]
+  }),
+)
+
 /** Tees and couplings stay as a ball — there is no arc to draw. */
 const joints = computed(() =>
   shownFittings.value.flatMap((fitting) => {
-    if (fitting.kind === 'elbow') return []
+    if (fitting.kind === 'elbow' || fitting.kind === 'aav') return []
     const radius = fittingRadius(fitting) * 1.4
     return [
       {
@@ -154,6 +178,14 @@ function torusFor(placement: { radius: number; tube: number; arc: number }): Tor
       :material="materials[joint.system]"
       :position="joint.position"
       :scale="joint.scale"
+    />
+    <TresMesh
+      v-for="valve in valves"
+      :key="valve.key"
+      :geometry="unitCylinder"
+      :material="materials[valve.system]"
+      :position="valve.position"
+      :scale="valve.scale"
     />
   </TresGroup>
 </template>

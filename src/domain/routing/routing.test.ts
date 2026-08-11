@@ -20,7 +20,16 @@ import {
 } from '../project.ts'
 import { wallsOf } from '../model.ts'
 import { closestPointOnSegment } from '../geometry/vec.ts'
-import { branchDiameter, flowFromDu } from '../standards/en12056.ts'
+import {
+  branchDiameter,
+  collectorDiameter,
+  flowFromDu,
+  partFullFlow,
+  slopeLimits,
+  stackDiameter,
+  unventedBranchLimits,
+  VELOCITY_LIMITS,
+} from '../standards/en12056.ts'
 import { supplyDiameter } from '../standards/en806.ts'
 import type { FixtureType, Network, Project, Segment } from '../types.ts'
 import { groupCircuits, solve } from './index.ts'
@@ -109,11 +118,42 @@ function twoStorey(options: { alignUpper?: boolean } = {}): Project {
   return relevel(project)
 }
 
+/**
+ * Three aligned storeys with one appliance on each, so the stack has two sections carrying
+ * different loads — which is the arrangement that used to produce a reducer inside it.
+ */
+function threeStorey(): Project {
+  const project = createProject('three storey')
+  project.levels.push(createLevel(1, project.settings), createLevel(2, project.settings))
+  relevel(project)
+
+  const rooms = project.levels.map((level, index) =>
+    createRoom(`Room ${index}`, { x: 0, y: 0 }, 4000, 3000, level, project.settings),
+  )
+  project.rooms.push(...rooms)
+
+  project.fixtures.push(
+    createFixture(project, 'sink', rooms[0].id, { wallIndex: 0, wallOffset: 700 }),
+    createFixture(project, 'wc', rooms[1].id, { wallIndex: 0, wallOffset: 900 }),
+    // A basin on its own at the top: 0.5 DU on a DN40 connection, which the stack table would
+    // happily carry at DN70 if each section were sized on its own.
+    createFixture(project, 'basin', rooms[2].id, { wallIndex: 0, wallOffset: 900 }),
+  )
+  project.servicePoints.push(
+    createServicePoint('wasteOutlet', { x: 3600, y: 200 }, project.levels[0], rooms[0].id),
+  )
+
+  return relevel(project)
+}
+
 const networkOf = (project: Project, system: Network['system']): Network | undefined =>
   solve(project).networks.find((n) => n.system === system)
 
 /** Horizontal component of a run — the distance the fall is measured over. */
 const planRun = (s: Segment): number => Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y)
+
+/** Graded pipe: everything laid to a fall, whether it is still a branch or already collector. */
+const isGraded = (s: Segment): boolean => s.role === 'branch' || s.role === 'collector'
 
 const planLength = (network: Network): number =>
   network.segments.reduce((sum, s) => sum + planRun(s), 0)
@@ -132,16 +172,19 @@ describe('drainage', () => {
       // Segments are emitted child -> parent, i.e. away from the outlet, so the far end is
       // always the higher one. Anything else would be a pipe asking water to climb.
       expect(segment.a.z).toBeGreaterThanOrEqual(segment.b.z - 1e-6)
-      if (segment.role === 'branch' && planRun(segment) > 1) {
+      if (isGraded(segment) && planRun(segment) > 1) {
         expect(segment.slope).toBeGreaterThanOrEqual(project.settings.drainage.minSlope - 1e-9)
         expect(segment.slope).toBeLessThanOrEqual(project.settings.drainage.maxSlope + 1e-9)
       }
     }
   })
 
-  test('a kitchen sink branch is DN50 — its own connection size, not its tiny DU load', () => {
+  test('a kitchen sink connects at DN50 — its own connection size, not its tiny DU load', () => {
     const project = scenario({ fixtures: [{ type: 'sink', wallIndex: 0, offset: 700 }] })
     const waste = networkOf(project, 'waste')!
+    // The drop out of the appliance is the one run sized by the appliance rather than by what
+    // it discharges; nothing anywhere may come out narrower than it.
+    expect(waste.segments.find((s) => s.role === 'drop')!.size).toBe(50)
     for (const segment of waste.segments) expect(segment.size).toBeGreaterThanOrEqual(50)
   })
 
@@ -235,9 +278,9 @@ describe('drainage', () => {
 
     const waste = result.networks.find((n) => n.system === 'waste')!
     for (const segment of waste.segments) {
-      if (segment.role !== 'branch' || planRun(segment) <= 1) continue
+      if (!isGraded(segment) || planRun(segment) <= 1) continue
       expect(segment.slope).toBeGreaterThanOrEqual(project.settings.drainage.minSlope - 1e-9)
-      // No part of a buried branch may surface above the finished floor.
+      // No part of a buried run may surface above the finished floor.
       expect(Math.max(segment.a.z, segment.b.z)).toBeLessThanOrEqual(0)
     }
   })
@@ -253,6 +296,51 @@ describe('drainage', () => {
       (w) => w.severity === 'error' && /under the floor/.test(w.message),
     )
     expect(errors.length).toBeGreaterThan(0)
+  })
+
+  test('even a single sink leaves the building through a DN100 collector', () => {
+    const project = scenario({ fixtures: [{ type: 'sink', wallIndex: 0, offset: 700 }] })
+    const waste = networkOf(project, 'waste')!
+
+    const collector = waste.segments.filter((s) => s.role === 'collector')
+    expect(collector.length).toBeGreaterThan(0)
+    // 0.8 DU is DN50 as a branch. As the drain out of the building it is DN100 — the floor
+    // EN 12056-2 / DIN 1986-100 put under every collector, regardless of what is on it.
+    for (const segment of collector) expect(segment.size).toBe(100)
+  })
+
+  test('a trap needs room for its body, not just for its water seal', () => {
+    const project = scenario({
+      fixtures: [{ type: 'basin', wallIndex: 0, offset: 700 }],
+      outletZ: -300,
+    })
+    // Hung low on purpose: about 90 mm between the basin outlet and the branch invert. That
+    // clears the 50 mm water seal EN 12056-2 asks for, and it is nowhere near the 200 mm a
+    // bottle trap physically occupies.
+    project.fixtures[0].z = 200
+
+    const errors = solve(project).warnings.filter(
+      (w) => w.severity === 'error' && /trap/.test(w.message),
+    )
+    expect(errors.length).toBe(1)
+    expect(errors[0].message).toContain('200 mm')
+    expect(errors[0].fixtureId).toBe(project.fixtures[0].id)
+  })
+
+  test('the project ceiling on fall is honoured, not only its floor', () => {
+    const steepest = (project: Project) =>
+      Math.max(
+        ...networkOf(project, 'waste')!
+          .segments.filter((s) => isGraded(s) && planRun(s) > 1)
+          .map((s) => s.slope ?? 0),
+      )
+
+    const plain = scenario({ fixtures: [{ type: 'sink', wallIndex: 0, offset: 700 }] })
+    const capped = scenario({ fixtures: [{ type: 'sink', wallIndex: 0, offset: 700 }] })
+    capped.settings.drainage.maxSlope = 0.012
+
+    expect(steepest(plain)).toBeGreaterThan(0.015)
+    expect(steepest(capped)).toBeLessThanOrEqual(0.0125)
   })
 })
 
@@ -353,14 +441,15 @@ describe('swept corners', () => {
     expect(drainLines.some((line) => /^Bend 90° DN/.test(line.item))).toBe(false)
 
     const waste = result.networks.find((n) => n.system === 'waste')!
-    const pipeMetres = result.bom
-      .filter((l) => l.system === 'waste' && l.unit === 'm')
-      .reduce((sum, l) => sum + l.quantity, 0)
+    const pipe = result.bom.filter((l) => l.system === 'waste' && l.unit === 'm')
+    const pipeMetres = pipe.reduce((sum, l) => sum + l.quantity, 0)
     const bendMetres = waste.segments
       .filter((s) => s.role === 'bend')
       .reduce((sum, s) => sum + s.length, 0)
     expect(bendMetres).toBeGreaterThan(0)
-    expect(pipeMetres * 1000).toBeLessThan(waste.totalLength - bendMetres + 1)
+    // Each line of the order is rounded to the centimetre, so the total may sit half a
+    // centimetre per line above the geometry it came from without anything being billed twice.
+    expect(pipeMetres * 1000).toBeLessThan(waste.totalLength - bendMetres + 5 * pipe.length)
   })
 
   /**
@@ -503,7 +592,7 @@ describe('drainage strategies', () => {
 
   const bearingsOf = (waste: Network) =>
     waste.segments
-      .filter((s) => s.role === 'branch' && Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) > 1)
+      .filter((s) => isGraded(s) && Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) > 1)
       .map((s) => (((Math.atan2(s.b.y - s.a.y, s.b.x - s.a.x) * 180) / Math.PI + 360) % 180))
 
   test('the diagonal strategy runs horizontally at whatever bearing is shortest', () => {
@@ -531,11 +620,16 @@ describe('drainage strategies', () => {
     // Every fixture in the sample house sits along a wall, so the rectilinear route is
     // already optimal and cutting corners would only add bends. Both strategies should
     // therefore agree here — a diagonal is a tool, not a reflex.
+    //
+    // Agreement is measured to half a percent rather than to the millimetre: the diagonal
+    // strategy lays a square lattice over the plan lines, so its nodes land in slightly
+    // different places and the offsets and chamfers that follow are a few millimetres longer
+    // or shorter. Taking a corner that was not worth taking costs metres, not millimetres.
     const straight = solve(sampleProject())
     const diagonal = solve(diagonalProject())
     const lengthOf = (r: typeof straight) =>
       r.networks.find((n) => n.system === 'waste')!.totalLength
-    expect(lengthOf(diagonal)).toBeLessThanOrEqual(lengthOf(straight) + 1)
+    expect(lengthOf(diagonal)).toBeLessThanOrEqual(lengthOf(straight) * 1.005)
   })
 
   test('no single drainage bend is sharper than 45°, whichever strategy is used', () => {
@@ -725,9 +819,9 @@ describe('appliance connection entry', () => {
 
   test('a fixture with no wall behind it falls back to bottom entry and says so', () => {
     const project = entryProject('back')
-    const kitchen = project.rooms.find((r) => r.name === 'Kitchen')!
+    const kitchen = project.rooms.find((r) => r.name === 'Bucătărie')!
     project.fixtures.push(
-      createFixture(project, 'floor-drain', kitchen.id, { position: { x: 1700, y: 1400 } }),
+      createFixture(project, 'floor-drain', kitchen.id, { position: { x: 12600, y: 7000 } }),
     )
 
     const result = solve(project)
@@ -880,19 +974,20 @@ describe('storeys and stacks', () => {
     expect(columns.size).toBe(1)
   })
 
-  test('a WC upstairs makes the stack DN100', () => {
+  test('a WC upstairs makes the stack DN90 — the EN minimum for a stack carrying one', () => {
     const waste = solve(twoStorey()).networks.find((n) => n.system === 'waste')!
     const stack = waste.segments.find((s) => s.role === 'stack')!
-    expect(stack.size).toBeGreaterThanOrEqual(100)
+    // 2.5 DU is 0.79 l/s, which DN70 would carry on flow alone; a WC on the stack rules it out.
+    expect(stack.size).toBeGreaterThanOrEqual(90)
   })
 
   test('only the horizontal run buys fall — the stack drop does not eat headroom', () => {
     const project = twoStorey()
     const waste = solve(project).networks.find((n) => n.system === 'waste')!
 
-    // Every branch on a storey has to stay under that storey's own floor.
+    // Every graded run on a storey has to stay under that storey's own floor.
     for (const segment of waste.segments) {
-      if (segment.role !== 'branch') continue
+      if (!isGraded(segment)) continue
       const level = [...project.levels]
         .reverse()
         .find((l) => Math.max(segment.a.z, segment.b.z) < l.elevation + l.height)
@@ -924,6 +1019,65 @@ describe('storeys and stacks', () => {
     expect(result.bom.some((line) => line.item.startsWith('Soil stack DN'))).toBe(true)
   })
 
+  test('the drain below the stack foot is a collector, not a long branch', () => {
+    const waste = solve(twoStorey()).networks.find((n) => n.system === 'waste')!
+
+    const collector = waste.segments.filter((s) => s.role === 'collector')
+    expect(collector.length).toBeGreaterThan(0)
+    for (const segment of collector) expect(segment.size).toBeGreaterThanOrEqual(100)
+
+    // The last run into the outlet — the lowest thing in the drawing — is the collector.
+    const lowest = waste.segments.reduce((best, s) => (s.b.z < best.b.z ? s : best))
+    expect(lowest.role).toBe('collector')
+
+    // And none of it is above the stack foot: a collector starts where the stack lands.
+    const foot = Math.min(...waste.segments.filter((s) => s.role === 'stack').map((s) => s.b.z))
+    for (const segment of collector) {
+      expect(Math.max(segment.a.z, segment.b.z)).toBeLessThanOrEqual(foot + 1)
+    }
+  })
+
+  test('a stack keeps one nominal width over its whole height', () => {
+    const waste = solve(threeStorey()).networks.find((n) => n.system === 'waste')!
+    const stacks = waste.segments.filter((s) => s.role === 'stack')
+    // Two slab crossings, carrying different loads and different connection sizes.
+    expect(stacks.length).toBeGreaterThan(1)
+
+    const sizes = new Set(stacks.map((s) => s.size))
+    expect(sizes.size).toBe(1)
+    // The basin on the top floor alone would take DN70; the WC below it puts the whole stack
+    // at DN90, rather than leaving a reducer inside the shaft for solids to catch on.
+    expect([...sizes][0]).toBe(90)
+  })
+
+  test('everything carrying a WC is at least DN90, whatever its discharge units say', () => {
+    const waste = solve(twoStorey()).networks.find((n) => n.system === 'waste')!
+    let carrying = 0
+    for (const segment of waste.segments) {
+      if (segment.load < 2.0 - 1e-9) continue
+      carrying += 1
+      expect(segment.size).toBeGreaterThanOrEqual(90)
+    }
+    expect(carrying).toBeGreaterThan(0)
+  })
+
+  test('a branch dropping more than a metre to the stack is reported', () => {
+    const shallow = solve(twoStorey()).warnings
+    expect(shallow.some((w) => /between its connection and the branch/.test(w.message))).toBe(false)
+
+    // Drop the outlet a metre and a half and the upstairs branches now meet the stack that
+    // much lower, which is the drop EN 12056-2 caps at 1 m on an unventilated branch.
+    const project = twoStorey()
+    project.servicePoints.find((s) => s.kind === 'wasteOutlet')!.z -= 1300
+
+    const reported = solve(project).warnings.filter((w) =>
+      /between its connection and the branch/.test(w.message),
+    )
+    expect(reported.length).toBeGreaterThan(0)
+    expect(reported.every((w) => w.severity === 'warning')).toBe(true)
+    expect(reported.every((w) => w.fixtureId !== undefined)).toBe(true)
+  })
+
   test('the sample house is a two-storey building that fully solves', () => {
     const project = sampleProject()
     expect(project.levels).toHaveLength(2)
@@ -936,12 +1090,17 @@ describe('storeys and stacks', () => {
 })
 
 describe('reach across rooms', () => {
+  /** The upstairs bathroom — the sample has one on each storey. */
+  const upstairsBathroom = (project: Project) =>
+    project.rooms.find((r) => r.name === 'Baie' && r.levelId === project.levels[1].id)!
+
   test('a fixture in the next room still reaches the outlet', () => {
     const project = sampleProject()
     const result = solve(project)
 
-    const bathroom = project.rooms.find((r) => r.name === 'Bathroom')!
-    const bathroomFixtures = project.fixtures.filter((f) => f.roomId === bathroom.id)
+    const bathroomFixtures = project.fixtures.filter(
+      (f) => f.roomId === upstairsBathroom(project).id,
+    )
     expect(bathroomFixtures.length).toBeGreaterThan(0)
 
     for (const network of result.networks) {
@@ -951,9 +1110,9 @@ describe('reach across rooms', () => {
 
   test('a detached room cannot be reached, and says so', () => {
     const project = sampleProject()
-    // Shove the bathroom well clear of the kitchen — nothing connects them any more.
-    const bathroom = project.rooms.find((r) => r.name === 'Bathroom')!
-    bathroom.outline = bathroom.outline.map((p) => ({ x: p.x + 6000, y: p.y }))
+    // Shove the bathroom well clear of the house — nothing connects them any more.
+    const bathroom = upstairsBathroom(project)
+    bathroom.outline = bathroom.outline.map((p) => ({ x: p.x + 12000, y: p.y }))
 
     const result = solve(project)
     const unreached = result.networks.flatMap((n) => n.unreachedFixtureIds)
@@ -985,15 +1144,99 @@ describe('supply', () => {
 describe('standards tables', () => {
   test('branch diameters follow EN 12056-2 System I', () => {
     expect(branchDiameter(0.5, 40)).toBe(40)
+    // A basin plus a sink is 1.3 DU. DN50 stops at 1.0, so the pair needs DN70 — the old
+    // 1.5 DU allowance for DN50 is not in the standard and put two appliances on one small pipe.
     expect(branchDiameter(0.8, 40)).toBe(50)
-    expect(branchDiameter(1.6, 40)).toBe(70)
-    expect(branchDiameter(4.0, 40)).toBe(100)
+    expect(branchDiameter(1.3, 40)).toBe(70)
+    // DN70 carries 9 DU, not 3: the branch table is not nearly as tight as it looked.
+    expect(branchDiameter(4.0, 40)).toBe(70)
+    expect(branchDiameter(10.0, 40)).toBe(90)
     expect(branchDiameter(0.5, 100)).toBe(100)
+  })
+
+  test('a WC will not go on DN70, and only two will go on DN90', () => {
+    // Load alone would put a single WC's 2.0 DU comfortably on DN70.
+    expect(branchDiameter(2.0, 40, 0)).toBe(70)
+    expect(branchDiameter(2.0, 40, 1)).toBe(90)
+    expect(branchDiameter(4.0, 40, 2)).toBe(90)
+    expect(branchDiameter(6.0, 40, 3)).toBe(100)
+  })
+
+  test('stack capacities are the swept-entry column, and a WC forces DN90', () => {
+    // 4 DU is 1.0 l/s: DN70 carries 2.0 with swept entries, so flow alone would allow it.
+    expect(stackDiameter(4.0, 70)).toBe(70)
+    expect(stackDiameter(4.0, 70, 1)).toBe(90)
+    // DN90 stops at 3.5 l/s, which is 49 DU.
+    expect(stackDiameter(49, 70)).toBe(90)
+    expect(stackDiameter(60, 70)).toBe(100)
+    // Sizes the standard has no row for are not invented.
+    expect([70, 90, 100, 125, 150, 200]).toContain(stackDiameter(9, 70))
+  })
+
+  test('collectors are sized from their gradient and never fall below DN100', () => {
+    // 12 DU is 1.73 l/s. DN100 carries 1.8 at 0.5% — just — and everything above that.
+    expect(collectorDiameter(12, 0.005)).toBe(100)
+    expect(collectorDiameter(12, 0.02)).toBe(100)
+    // 40 DU is 3.16 l/s, past what DN100 passes at half a percent but fine at two.
+    expect(collectorDiameter(40, 0.005)).toBe(125)
+    expect(collectorDiameter(40, 0.02)).toBe(100)
+    // A gradient between two columns is credited with the gentler one, never the steeper.
+    expect(collectorDiameter(40, 0.0075)).toBe(125)
+    // The DN100 floor holds however little is on it.
+    expect(collectorDiameter(0.5, 0.05)).toBe(100)
+  })
+
+  test('falls follow the rule for what the pipe is, not just how wide it is', () => {
+    // A branch is 1% un-ventilated and 0.5% ventilated, whatever its diameter.
+    expect(slopeLimits(50).min).toBeCloseTo(0.01, 6)
+    expect(slopeLimits(50, true).min).toBeCloseTo(0.005, 6)
+    expect(slopeLimits(90, false, false).min).toBeCloseTo(0.01, 6)
+    // A collector is 1:DN, which for domestic sizes is steeper than the branch rule.
+    expect(slopeLimits(100, false, true).min).toBeCloseTo(0.01, 6)
+    expect(slopeLimits(70, false, true).min).toBeCloseTo(1 / 70, 6)
+  })
+
+  test('unvented branch limits are diameter-independent, bar the collector length', () => {
+    const single = unventedBranchLimits(40, false)
+    expect(single.maxLength).toBe(4000)
+    expect(single.maxDrop).toBe(1000)
+    expect(single.maxTurn).toBe(270)
+    // The one place the diameter enters: a collector branch of DN70 and up gets 10 m.
+    expect(unventedBranchLimits(50, true).maxLength).toBe(4000)
+    expect(unventedBranchLimits(70, true).maxLength).toBe(10_000)
+    expect(unventedBranchLimits(100, true).maxLength).toBe(10_000)
   })
 
   test('Qww = K·√ΣDU', () => {
     expect(flowFromDu(4)).toBeCloseTo(1.0, 6)
     expect(flowFromDu(0)).toBe(0)
+  })
+
+  test('part-full hydraulics reproduce the collector table at half filling', () => {
+    // The table's DN100 row says 3.5 l/s at 2%; at that flow the pipe should be about half
+    // full, and running well inside the velocity band.
+    const { velocity, filling } = partFullFlow(3.5, 100, 0.02)
+    expect(filling).toBeGreaterThan(0.45)
+    expect(filling).toBeLessThan(0.55)
+    expect(velocity).toBeGreaterThan(VELOCITY_LIMITS.min)
+    expect(velocity).toBeLessThan(VELOCITY_LIMITS.max)
+
+    // Nothing to carry, nothing to say.
+    expect(partFullFlow(0, 100, 0.02)).toEqual({ velocity: 0, filling: 0 })
+  })
+
+  test('the velocity band, not a maximum gradient, is what caps a steep run', () => {
+    // The steepest column of the collector table is 5%, and even loaded to capacity there
+    // nothing reaches 2.5 m/s. That is exactly why calling a steep pipe a fault was wrong:
+    // EN 12056-2 has no such rule, and the rule it does have is nowhere near binding at the
+    // gradients a drain under a floor is laid at.
+    expect(partFullFlow(5.6, 100, 0.05).velocity).toBeLessThan(VELOCITY_LIMITS.max)
+    expect(partFullFlow(17.2, 150, 0.05).velocity).toBeLessThan(VELOCITY_LIMITS.max)
+
+    // It bites where it should — a drain dropped down a bank rather than laid under a floor.
+    const plunging = partFullFlow(5.6, 100, 0.4)
+    expect(plunging.velocity).toBeGreaterThan(VELOCITY_LIMITS.max)
+    expect(plunging.filling).toBeLessThan(0.5)
   })
 })
 

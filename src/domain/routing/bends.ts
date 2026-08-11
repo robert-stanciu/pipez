@@ -68,6 +68,115 @@ const OBLIQUE_ENOUGH = 46
 const AGAINST_THE_FLOW = 100
 
 /**
+ * A step across shorter than this is an offset, not a leg of the run.
+ *
+ * Two runs that should be one pipe end up a little apart whenever the plan lines they follow
+ * are: an appliance tail 50 mm off the wall line the main run keeps to, say. The router is
+ * right to step across — the pipe really does have to get from one to the other — but it draws
+ * the step as two square corners, and inside a couple of hundred millimetres there is no room
+ * to build those as swept pairs. A real installer does it in one movement, with two 45° bends
+ * back to back, which is what this pass draws instead.
+ */
+const MAX_OFFSET_STEP = 250
+
+/**
+ * Replace short lateral steps with a 45° offset, clear of the junction before them.
+ *
+ * The step is free to happen anywhere along the two parallel runs it joins — sliding it costs
+ * nothing and changes no pipe line — so it is moved far enough downstream to leave a fitting's
+ * worth of straight run after the junction it was crowding, and the corner it made is turned
+ * into a diagonal. Inverts are re-interpolated over the new lengths, so the fall through the
+ * offset is the fall of the run it replaced.
+ */
+export function absorbOffsets(segments: Segment[], nextId: () => string): Segment[] {
+  const incident = new Map<string, Segment[]>()
+  for (const segment of segments) {
+    for (const end of [segment.a, segment.b]) {
+      const key = pointKey(end)
+      const list = incident.get(key)
+      if (list) list.push(segment)
+      else incident.set(key, [segment])
+    }
+  }
+
+  const dropped = new Set<string>()
+  const replaced = new Map<string, Segment>()
+  const inserted: Segment[] = []
+
+  // Sorted so the result does not depend on array order.
+  for (const step of [...segments].sort((l, r) => l.id.localeCompare(r.id))) {
+    const across = dist3(step.a, step.b)
+    if (across < 1 || across > MAX_OFFSET_STEP) continue
+    if (step.role === 'bend' || step.role === 'stack' || step.role === 'vent') continue
+
+    const startKey = pointKey(step.a)
+    const endKey = pointKey(step.b)
+    // Nothing else may leave the far end, or there is no single run to slide the step along.
+    const beyond = (incident.get(endKey) ?? []).filter((s) => s.id !== step.id)
+    if (beyond.length !== 1) continue
+    const after = beyond[0]
+    if (pointKey(after.a) !== endKey || dropped.has(after.id)) continue
+
+    // The run arriving at the near end that the step is offsetting from.
+    const before = (incident.get(startKey) ?? []).find(
+      (s) => s.id !== step.id && pointKey(s.b) === startKey,
+    )
+    if (!before || dropped.has(before.id)) continue
+
+    const alongBefore = unit(before.a, before.b)
+    const alongAfter = unit(after.a, after.b)
+    const stepDir = unit(step.a, step.b)
+    // Parallel runs, stepped across: anything else is a genuine corner and is swept, not moved.
+    if (angleBetween(alongBefore, alongAfter) > 5) continue
+    if (angleBetween(stepDir, alongAfter) < 60) continue
+
+    // Room to slide: a fitting's length of straight run after the junction, and the diagonal
+    // and its own clearance still inside the run beyond.
+    const clearance = legFor(step.size)
+    const beyondLength = dist3(after.a, after.b)
+    const slide = Math.min(clearance, beyondLength - across - clearance)
+    if (slide < 20) continue
+
+    const corner = along(step.a, alongAfter, slide)
+    const rejoin = along(corner, stepDir, across)
+    const landing = along(rejoin, alongAfter, across)
+
+    // Fall is re-spread over the new lengths, so the run drops by what it dropped before.
+    const oldTotal = across + beyondLength
+    const newTotal = slide + across * Math.SQRT2 + (beyondLength - across - slide)
+    const fall = (step.a.z - after.b.z) / (oldTotal > 0 ? oldTotal : 1)
+    const zAt = (distance: number) => step.a.z - fall * (oldTotal / newTotal) * distance
+    const at = (p: Vec3, distance: number): Vec3 => ({ x: p.x, y: p.y, z: zAt(distance) })
+
+    const straight = at(corner, slide)
+    const diagonal = at(landing, slide + across * Math.SQRT2)
+
+    const piece = (a: Vec3, b: Vec3, role: Segment['role']): Segment => {
+      const length = dist3(a, b)
+      const run = Math.hypot(b.x - a.x, b.y - a.y)
+      return { ...step, id: nextId(), a, b, length, role, slope: run > 0 ? (a.z - b.z) / run : 0 }
+    }
+
+    dropped.add(step.id)
+    inserted.push(piece({ ...step.a }, straight, step.role))
+    inserted.push(piece(straight, diagonal, 'bend'))
+    replaced.set(after.id, {
+      ...after,
+      a: diagonal,
+      length: dist3(diagonal, after.b),
+    })
+  }
+
+  if (dropped.size === 0) return segments
+  return [
+    ...segments
+      .filter((segment) => !dropped.has(segment.id))
+      .map((segment) => replaced.get(segment.id) ?? segment),
+    ...inserted,
+  ].filter((segment) => segment.length >= 1)
+}
+
+/**
  * Swing branch connections round to enter in the direction of flow.
  *
  * A square tee on a drain is wrong for the same reason a square elbow is: the incoming flow
@@ -132,8 +241,20 @@ export function sweepJunctions(segments: Segment[], nextId: () => string): Segme
     )
     if (branches.length === 0) continue
 
-    // Trims are capped well short of half a segment so a run touched at both ends survives.
-    const room = (segment: Segment) => dist3(segment.a, segment.b) * 0.3
+    /**
+     * How much of a run this junction may eat.
+     *
+     * A run touched at both ends has to survive both, so it only gives up a third. A run that
+     * ends in a loose end — the last piece into the outlet, typically — has nothing else
+     * claiming it and can be consumed whole: the junction then lands on the outlet itself,
+     * which is where the tee physically is when a branch drops in beside it. Refusing that
+     * case is what leaves a square tee 30 mm short of the outfall.
+     */
+    const room = (segment: Segment) => {
+      const length = dist3(segment.a, segment.b)
+      const far = pointKey(segment.a) === key ? segment.b : segment.a
+      return (incident.get(pointKey(far))?.segments.length ?? 0) === 1 ? length : length * 0.3
+    }
     const leg = Math.min(
       legFor(Math.max(outgoing.size, ...branches.map((b) => b.segment.size))),
       room(outgoing),
@@ -187,7 +308,10 @@ export function sweepJunctions(segments: Segment[], nextId: () => string): Segme
       return { ...segment, a, b, length: dist3(a, b) }
     }),
     ...inserted,
-  ]
+    // A run swallowed whole by its junction is now a point. Dropping it costs no connectivity
+    // — both its ends are the same place — and leaving it in would put a zero-length pipe on
+    // the schedule and a coupling in the middle of a fitting.
+  ].filter((segment) => segment.length >= 1)
 }
 
 /**

@@ -40,8 +40,9 @@ storey's height moves everything above it.
 along it, so they follow when the wall moves. Each fixture carries typed connection ports and
 its load figures; those are what the solver actually connects.
 
-**Mark** the three service points — water entry, waste outlet, consumer unit. Every network is
-a tree rooted at one of them.
+**Mark** the service points — water entry, waste outlet, consumer unit. Every network is a
+tree rooted at one of them. Water comes into a building once, so placing the entry again moves
+it; drainage and boards can have several, so placing those again adds one.
 
 The solve then runs automatically, in a worker, debounced behind your edits.
 
@@ -149,6 +150,24 @@ says so and tells you what would fix it.
 
 Cables are not affected: a socket is always fed from behind.
 
+**Drainage may leave the building in more than one place.** A house whose bathroom is at one
+end and whose kitchen is at the other does not run one pipe the length of it to keep the
+drainage in one piece — each side goes out through the nearest wall. Every outlet you place
+becomes a root, and which fixture uses which is answered by the router rather than asked of
+you: the outlets hang off one costless virtual root, each branch grows to whichever is
+cheapest to reach, and the tree falls apart into one real network per outlet. The design can
+only improve for being offered another way out, and the plan shows the networks as the
+separate pieces they are.
+
+**Every drain is vented.** A discharging stack drags air behind it, and with nowhere for that
+air to come from it is pulled through the nearest trap instead — which empties the seal and
+lets the drain into the room. So the highest point of each network gets an air admittance
+valve: it lets air in and shuts against anything trying to leave, equalising the pressure
+without taking a vent through the roof. It is sized to the pipe it sits on, and it is placed
+on the finished drawing rather than on the routed tree, because sweeping corners moves points
+about and a stub hung off a point that later moved would attach to nothing. In plan it is a
+ring with the air arrow running into it; in 3D, the squat cap it is.
+
 **Stacks are not placed — they emerge.** A run may only cross a slab inside a wall that exists
 on *both* storeys, and each crossing is charged steeply. Combined with the reuse discount,
 that pulls every upstairs branch onto one shaft: a soil stack, a rising main, a cable riser.
@@ -169,6 +188,13 @@ rather than an optimum, but close enough on the couple of dozen circuits a build
 imbalance is reported in **amps, not percent** — two small circuits can sit 100% apart and
 mean nothing, while the same percentage on a heavy supply is tens of amps down the neutral.
 
+**A board per storey, if you want one.** Place a second consumer unit and it becomes a
+sub-board: the main board is the one on the lowest storey, where the supply arrives, and each
+of the others is fed from it by a submain sized for the load behind it. Circuits are then
+assigned to whichever board is cheaper to reach and never span two — a circuit belongs to one
+board or it is not a circuit — so the upstairs cabling stops climbing back down to the ground
+floor and the runs, and their volt drops, get shorter.
+
 **Cable is sized on the run, not just the breaker.** A 2.5 mm² circuit protected at 16 A is
 perfectly safe and still unusable at forty metres, because the far end sags below what the
 appliance will start on. Sizing happens after routing, when the length is known, against the
@@ -179,9 +205,17 @@ its breaker rating rather than its connected load — nobody knows what will be 
 **The board gets its own view.** Wiring and board layout answer different questions: on the
 plan you want to know where a cable runs; on the board, what is on which way, behind which
 device, on which line, and whether the incomer can carry it. So the panel replaces the plan
-and 3D rather than sharing with them. It draws the consumer unit as a single-line diagram —
-busbars in the HD 308 core colours, main switch, each residual current device with its
-circuits tapped off the line they actually sit on — above the full circuit schedule.
+and 3D rather than sharing with them.
+
+It is drawn as the board itself, to scale — the enclosure, top-hat DIN rails at the 17.5 mm
+module pitch, twelve modules to a row, and gear with the proportions of the real thing: body,
+toggle, label window and printed marking, so a breaker reads `C16` and a residual current
+device reads `40 A / 30 mA` with its test button. A three-pole breaker is three ganged
+modules, the free modules carry blanking plates, the comb busbar and the loop wiring behind
+the gear are drawn, and the neutral and earth bars run along the bottom in the HD 308 core
+colours. Where there is more than one board, a selector names each one, marks which is the
+main and which storey it sits on, and the schedule below follows the selection. Hovering a
+device highlights its row, and hovering a row highlights the device.
 
 A three-phase board uses four-pole devices. A two-pole one switches a single line and the
 neutral, so everything behind it would have to be on that same line, which would tie the
@@ -190,6 +224,23 @@ residual-current grouping to the phase balancing and let each constrain the othe
 **Cables are constrained by where, not just how far.** Horizontal runs follow wall centrelines
 inside the DIN 18015-3 installation zones, plus the ceiling plane for light points. A cable
 buried outside those zones is a real hazard, so it is not an option the search is offered.
+
+Which of the two permitted bands the distribution uses is a setting, the same kind of choice
+as the drainage layout: **along the ceiling**, which suits a slab you would rather not chase
+and gives the shortest runs to the lights, or **under the floor**, in the screed, which gives
+the shortest runs to the sockets. The drops to each point stay inside the vertical zones
+either way.
+
+**What to buy, and where.** The bill of materials is what the design *needs*; the shopping
+list is what you would actually order. It renames every line into the words a Romanian
+merchant's catalogue uses, converts the standards' nominal bores into the sizes on the shelf
+(DN100 drainage is Ø110 PVC; DN15 supply is Ø20 PPR), rounds pipe up to whole bars and says
+so in the row rather than inflating the number quietly, and derives the board parts the
+routing never counts — enclosure, main switch, one RCCB per device group, busbar comb, DIN
+rail, terminal bars, blanking plates, and the submain for a sub-board. Each row carries a
+search link to Dedeman, Hornbach, Leroy Merlin, Brico Dépôt and Romstal, built from the
+Romanian search terms shown beside it. They are searches, not deep product links: a search
+resolves, and an invented SKU does not.
 
 ### Standards
 
@@ -219,12 +270,12 @@ it was.
 
 ```
 src/
-├─ domain/          pure TS: model, geometry, catalogue, standards, routing
+├─ domain/          pure TS: model, geometry, catalogue (fixtures · suppliers), standards, routing
 │  └─ routing/      graph · search · steiner · waste · supply · electrical · bends · fittings
 ├─ workers/         the solver, off the main thread
 ├─ stores/          pinia: project (with undo) · selection · view · plan · routing
 ├─ three/           the one place mm/z-up becomes m/y-up
-├─ components/      plan2d (SVG) · view3d (TresJS) · panels · ui
+├─ components/      plan2d (SVG) · view3d (TresJS) · panel (the board) · shopping · panels · ui
 └─ io/              .pipez files · autosave · glTF · CSV
 ```
 

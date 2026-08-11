@@ -88,19 +88,43 @@ const settings = z.object({
   electrical: z
     .object({
       supply: z.enum(['single-phase', 'three-phase']).default('three-phase'),
+      cableRoute: z.enum(['ceiling', 'floor']).default('ceiling'),
       voltage: z.number().positive().default(230),
       lineVoltage: z.number().positive().default(400),
       mainBreakerAmps: z.number().positive().default(25),
       circuitsPerRcd: z.number().int().positive().default(4),
+      // Added once earthing, reference method and surge protection became real inputs. A
+      // file written before them is a TN-C-S house wired in method B1 behind a Type 2
+      // arrester, which is what it was being designed as all along.
+      earthing: z.enum(['TN-S', 'TN-C-S', 'TT']).default('TN-C-S'),
+      installationMethod: z.enum(['A1', 'A2', 'B1', 'B2', 'C']).default('B1'),
+      surgeProtection: z.enum(['none', 'type-1', 'type-2', 'type-1+2']).default('type-2'),
+      modulesPerRow: z.union([z.literal(12), z.literal(18)]).default(12),
     })
     .default({
       supply: 'three-phase',
+      cableRoute: 'ceiling',
       voltage: 230,
       lineVoltage: 400,
       mainBreakerAmps: 25,
       circuitsPerRcd: 4,
+      earthing: 'TN-C-S',
+      installationMethod: 'B1',
+      surgeProtection: 'type-2',
+      modulesPerRow: 12,
     }),
   standards: z.literal('EN'),
+  // Added after the pipe material became a choice; a file written before it is simply a
+  // PP-R house on a 3 bar main, which is what it would have been drawn as anyway.
+  supply: z
+    .object({
+      material: z.enum(['copper', 'PPR', 'PEX-AL-PEX', 'PE-X']).default('PPR'),
+      // Ceiling distribution is what the solver drew before the choice existed, so a file
+      // written without it still comes back as the drawing its author saved.
+      route: z.enum(['ceiling', 'floor']).default('ceiling'),
+      entryPressureKpa: z.number().positive().default(300),
+    })
+    .default({ material: 'PPR', route: 'ceiling', entryPressureKpa: 300 }),
   drainage: z.object({
     // Added after the first release, so older files simply get the original behaviour.
     strategy: z.enum(['rectilinear', 'diagonal']).default('rectilinear'),
@@ -121,6 +145,7 @@ export const projectSchema = z.object({
     ...partial,
     drainage: { ...DEFAULT_SETTINGS.drainage, ...(partial.drainage ?? {}) },
     electrical: { ...DEFAULT_SETTINGS.electrical, ...(partial.electrical ?? {}) },
+    supply: { ...DEFAULT_SETTINGS.supply, ...(partial.supply ?? {}) },
   })),
   levels: z.array(level).min(1),
   rooms: z.array(room),
@@ -182,8 +207,24 @@ export function parseProject(raw: unknown): Project {
 
 export const serializeProject = (project: Project): string => JSON.stringify(project, null, 2)
 
-const slug = (name: string): string =>
-  name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project'
+/**
+ * A filename from a project name.
+ *
+ * Diacritics are folded to their base letters rather than deleted: "Casă Popescu" is
+ * `casa-popescu`, not `cas-popescu`. Romanian carries five of them — ă â î ș ț — and a house
+ * named after its street or its owner will very often have one, so dropping them turns the
+ * file name into something the person who saved it cannot recognise. Decomposing to NFD
+ * splits each letter into a base plus a combining mark, which the range below then strips;
+ * the comma-below on ș and ț is in that same block, so no per-letter table is needed.
+ */
+export const slug = (name: string): string =>
+  name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'project'
 
 export function download(filename: string, contents: string, mime = 'application/json'): void {
   const url = URL.createObjectURL(new Blob([contents], { type: mime }))

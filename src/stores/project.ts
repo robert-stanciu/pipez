@@ -13,6 +13,7 @@ import { fixtureDef } from '../domain/catalog/fixtures.ts'
 import { nearestWall, offsetWall, setWallLength, translateOutline } from '../domain/edit.ts'
 import { closestPointOnSegment, type Vec2 } from '../domain/geometry/vec.ts'
 import {
+  allowsMultiple,
   findLevel,
   findRoom,
   fixtureFrame,
@@ -400,12 +401,17 @@ export const useProjectStore = defineStore('project', () => {
 
   /* ----------------------------------------------------------- service points */
 
-  /** One of each kind — placing a second moves the existing one, storey and all. */
+  /**
+   * Water comes into a building once; drainage can leave it in several places and there can
+   * be more than one consumer unit, so those are added rather than moved.
+   */
   function placeServicePoint(kind: ServiceKind, point: Vec2, levelId: string | null): ServicePoint {
     checkpoint()
     const level = levelOr(levelId)
     const room = roomAt(project.value, point, level.id)
-    const existing = project.value.servicePoints.find((s) => s.kind === kind)
+    const existing = allowsMultiple(kind)
+      ? undefined
+      : project.value.servicePoints.find((s) => s.kind === kind)
     if (existing) {
       const previous = levelOr(existing.levelId)
       // Height is stored absolutely but meant relative to its own floor, so carry the
@@ -418,6 +424,9 @@ export const useProjectStore = defineStore('project', () => {
       return existing
     }
     const created = createServicePoint(kind, point, level, room?.id ?? null)
+    // Number them when there is more than one, so the schedule and the plan agree.
+    const sameKind = project.value.servicePoints.filter((s) => s.kind === kind).length
+    if (sameKind > 0) created.name = `${created.name} ${sameKind + 1}`
     project.value.servicePoints.push(created)
     touch()
     return created
