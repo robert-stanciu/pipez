@@ -207,8 +207,6 @@ export interface PlaneGridOptions {
   allowLoadBearingPenetration?: boolean
   /** Restrict the layer to points inside a wall — used for in-wall horizontal runs. */
   wallsOnly?: boolean
-  /** Also connect square cells corner to corner, giving runs at exactly 45°. */
-  diagonals?: boolean
 }
 
 export function buildPlaneGrid(
@@ -280,23 +278,127 @@ export function buildPlaneGrid(
         if (weight !== null) graph.connect(from, to, weight)
       }
 
-      if (!options.diagonals || ix + 1 >= xs.length) continue
-      const dx = xs[ix + 1] - xs[ix]
-      // Both cell diagonals, but only across a square cell: anything else would be a run at
-      // an angle no fitting is made in.
-      for (const step of [1, -1]) {
-        const jy = iy + step
-        if (jy < 0 || jy >= ys.length) continue
-        if (Math.abs(Math.abs(ys[jy] - ys[iy]) - dx) > 1) continue
-        const to = nodeAt[ix + 1][jy]
-        if (to === null) continue
-        const weight = spanWeight(planPos.get(from) as Vec2, planPos.get(to) as Vec2)
-        if (weight !== null) graph.connect(from, to, weight)
-      }
     }
   }
 
   return makeLayer(z, created)
+}
+
+/* --------------------------------------------------------- visibility graph */
+
+/** Above this the pairwise visibility test gets expensive; the candidate set is trimmed. */
+const MAX_VISIBILITY_NODES = 220
+
+/**
+ * What a diagonal costs in fittings, expressed as the length of pipe it has to save to be
+ * worth taking. Two bend pairs and the labour of setting them out, near enough.
+ */
+const DIAGONAL_FITTING_COST = 900
+
+/**
+ * Candidate waypoints for any-bearing routing, gathered from the **whole building**.
+ *
+ * Wall-centreline corners are the useful ones: they sit inside the envelope by construction,
+ * they let a run hug a wall when that is shortest, and they give it somewhere to turn when a
+ * straight line would leave the building. Taking them from every storey rather than just one
+ * means a candidate exists at the same plan position upstairs and down, which is what lets a
+ * stack find a place to drop.
+ */
+export function visibilityPoints(project: Project, attachAt: Vec2[] = []): Vec2[] {
+  const seen = new Set<string>()
+  const points: Vec2[] = []
+  const add = (p: Vec2) => {
+    const key = `${Math.round(p.x)},${Math.round(p.y)}`
+    if (seen.has(key)) return
+    seen.add(key)
+    points.push({ x: Math.round(p.x), y: Math.round(p.y) })
+  }
+
+  // Terminals first: if the budget bites, these are the ones that must survive.
+  for (const p of attachAt) add(p)
+  for (const point of project.servicePoints) add(point.position)
+  for (const room of project.rooms) {
+    for (const p of centrelineOutline(room)) add(p)
+  }
+  return points.slice(0, MAX_VISIBILITY_NODES)
+}
+
+export interface VisibilityOptions {
+  /** Shared candidate set, so the same plan positions exist on every storey. */
+  points: Vec2[]
+  penetrationWeight?: number
+  allowLoadBearingPenetration?: boolean
+}
+
+/**
+ * Overlay straight, any-bearing runs between mutually visible points on an existing layer.
+ *
+ * This is what the diagonal drainage strategy adds. A horizontal drain needs no fitting to
+ * travel at 37° — it is simply a straight pipe pointing that way, and the only fittings
+ * involved are the 45° pairs where it leaves and rejoins the vertical. So the plan geometry
+ * does not have to sit on a lattice.
+ *
+ * It is an overlay rather than a replacement because the two do different jobs. The straight
+ * edges give short hauls between the points that matter; the grid underneath gives the tree
+ * somewhere to branch. On its own, a visibility graph can only join branches at its handful
+ * of candidate points, which pushes the solver towards a star of separate runs — more pipe in
+ * total, even though each individual run is shorter.
+ */
+export function addVisibilityEdges(
+  graph: RouteGraph,
+  shape: BuildingShape,
+  layer: Layer,
+  options: VisibilityOptions,
+): number {
+  const { points, penetrationWeight = 1.5, allowLoadBearingPenetration = false } = options
+
+  const usable: Array<{ node: number; p: Vec2 }> = []
+  for (const p of points) {
+    if (!insideEnvelope(shape, p)) continue
+    const node = layer.at(graph, p)
+    if (node !== null) usable.push({ node, p })
+  }
+
+  /** Cost of running straight between two points, or null when the line leaves the building. */
+  const spanWeight = (a: Vec2, b: Vec2): number | null => {
+    const distance = dist2(a, b)
+    // Sample proportionally to length; a long span crossing a courtyard has to be caught.
+    const steps = Math.max(4, Math.min(48, Math.ceil(distance / 150)))
+    let crossesWall = false
+    for (let s = 1; s < steps; s++) {
+      const t = s / steps
+      const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+      if (!insideEnvelope(shape, p)) return null
+      if (!insideRoom(shape, p)) {
+        const wall = wallContaining(shape, p)
+        if (wall?.loadBearing && !allowLoadBearingPenetration) return null
+        crossesWall = true
+      }
+    }
+    return crossesWall ? penetrationWeight : 1
+  }
+
+  let added = 0
+  for (let i = 0; i < usable.length; i++) {
+    for (let j = i + 1; j < usable.length; j++) {
+      // Axis-aligned pairs already have a grid path of the same length; a duplicate edge
+      // would only give the search two identical options to churn over.
+      const a = usable[i].p
+      const b = usable[j].p
+      if (Math.abs(a.x - b.x) < 1 || Math.abs(a.y - b.y) < 1) continue
+      const weight = spanWeight(a, b)
+      if (weight === null) continue
+
+      // Leaving the grid and coming back costs a pair of bends at each end. Charging for
+      // that — as a fixed sum folded into the multiplier, since cost is length × weight —
+      // is what stops the solver cutting a diagonal to save 80 mm. A long haul still wins
+      // easily; a short hop is left to join the branch its neighbours are already on.
+      const length = dist2(a, b)
+      const surcharge = length > 0 ? 1 + DIAGONAL_FITTING_COST / length : 1
+      if (graph.connect(usable[i].node, usable[j].node, weight * surcharge) >= 0) added += 1
+    }
+  }
+  return added
 }
 
 /* ---------------------------------------------------------------- wall graph */

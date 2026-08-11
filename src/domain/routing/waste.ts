@@ -42,7 +42,15 @@ import type { Level, Network, Project, RoutingWarning, Segment } from '../types.
 import { sweepCorners } from './bends.ts'
 import { deriveFittings, mergeCollinear } from './fittings.ts'
 import { RouteGraph } from './graph.ts'
-import { buildPlaneGrid, linkStoreys, planLines, type Layer, type LevelShapes } from './layers.ts'
+import {
+  buildPlaneGrid,
+  addVisibilityEdges,
+  linkStoreys,
+  planLines,
+  visibilityPoints,
+  type Layer,
+  type LevelShapes,
+} from './layers.ts'
 import { buildTree, treeLinks, type RouteTree, type Terminal } from './steiner.ts'
 
 /** Minimum vertical drop from a fixture outlet into the branch — the trap seal plus fall. */
@@ -59,15 +67,6 @@ const MIN_INVERT_DEPTH = 60
  * halfway across the building to avoid one.
  */
 const SLAB_CROSSING_WEIGHT = 14
-
-/**
- * Cell size of the square lattice the diagonal strategy routes on.
- *
- * Fine enough to hug the geometry, coarse enough that the graph stays in the low thousands
- * of nodes. Only square cells get a corner-to-corner edge, so this is what sets how often a
- * 45° move is available.
- */
-const DIAGONAL_LATTICE_PITCH = 250
 
 export interface SystemSolution {
   network: Network
@@ -112,9 +111,11 @@ export function routeWaste(
 
   const graph = new RouteGraph()
   const attachAt: Vec2[] = [...ports.map((p) => ({ x: p.position.x, y: p.position.y })), outlet.position]
-  // The diagonal strategy needs square cells to cut across, so it overlays a regular lattice
-  // on the geometry lines; the rectilinear one has no use for the extra nodes.
-  const lines = planLines(project, attachAt, diagonal ? DIAGONAL_LATTICE_PITCH : undefined)
+
+  const lines = planLines(project, attachAt)
+  // The diagonal strategy adds straight runs at any bearing on top of the grid, between the
+  // points worth running straight between.
+  const points = diagonal ? visibilityPoints(project, attachAt) : []
 
   // Each storey's drainage plane sits just under its own floor. The elevation is nominal —
   // real inverts are assigned below — but it fixes how far a stack drops between storeys.
@@ -122,17 +123,22 @@ export function routeWaste(
   for (const level of levels) {
     const shape = shapes.byLevelId.get(level.id)
     if (!shape || shape.walls.length === 0) continue
-    planeOf.set(
-      level.id,
-      buildPlaneGrid(graph, project, shape, {
-        z: level.elevation - MIN_INVERT_DEPTH,
-        lines,
-        diagonals: diagonal,
-        // Below a floor a pipe crosses walls freely; the penalty just discourages weaving.
+
+    const plane = buildPlaneGrid(graph, project, shape, {
+      z: level.elevation - MIN_INVERT_DEPTH,
+      lines,
+      // Below a floor a pipe crosses walls freely; the penalty discourages weaving.
+      penetrationWeight: 1.5,
+      allowLoadBearingPenetration: true,
+    })
+    if (diagonal) {
+      addVisibilityEdges(graph, shape, plane, {
+        points,
         penetrationWeight: 1.5,
         allowLoadBearingPenetration: true,
-      }),
-    )
+      })
+    }
+    planeOf.set(level.id, plane)
   }
 
   const slabEdges = new Set<number>()

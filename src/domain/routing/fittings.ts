@@ -7,7 +7,7 @@
 import { dist3, type Vec3 } from '../geometry/vec.ts'
 import type { BomLine, Circuit, Fitting, Network, Segment, SystemKind } from '../types.ts'
 import { angleBetween } from './bends.ts'
-import { directionIndex, sameAxis } from './graph.ts'
+
 
 const pointKey = (p: Vec3): string => `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
 
@@ -30,19 +30,30 @@ function unitFrom(from: Vec3, to: Vec3): Vec3 {
  */
 const STRAIGHT_ENOUGH = 5
 
-/** Angles fittings are actually made in. */
-const CATALOGUE_ANGLES = [45, 90]
+/**
+ * Angles fittings are actually made in.
+ *
+ * Drainage stops at 45 — sharper turns are built from a pair — while pressurised pipe and
+ * cable are happily taken round a square corner in one fitting.
+ */
+const CATALOGUE_ANGLES: Record<SystemKind, number[]> = {
+  waste: [15, 30, 45],
+  cold: [45, 90],
+  hot: [45, 90],
+  power: [45, 90],
+}
 
 /**
  * Report the fitting you would order, not the angle the geometry happens to compute.
  *
  * A corner swept at 45° comes out as 44.4° once the fall is taken into account; the part in
- * the merchant's rack is still a 45.
+ * the merchant's rack is still a 45. An angle far from anything in the catalogue is reported
+ * as it is, so a genuinely odd corner shows up rather than being quietly rounded away.
  */
-function catalogueAngle(degrees: number): number {
+function catalogueAngle(degrees: number, system: SystemKind): number {
   let best = Math.round(degrees)
   let bestGap = Infinity
-  for (const candidate of CATALOGUE_ANGLES) {
+  for (const candidate of CATALOGUE_ANGLES[system]) {
     const gap = Math.abs(candidate - degrees)
     if (gap < bestGap && gap <= 5) {
       bestGap = gap
@@ -74,6 +85,18 @@ export function mergeCollinear(segments: Segment[]): Segment[] {
   const consumed = new Set<string>()
   const output: Segment[] = []
 
+  /**
+   * Truly parallel, not merely pointing into the same octant.
+   *
+   * Any-bearing runs make this matter: two diagonals heading north-east at different angles
+   * share a sign triple, and merging them would straighten a real corner out of existence.
+   */
+  const parallel = (x: Segment, y: Segment): boolean => {
+    const a = unitFrom(x.a, x.b)
+    const b = unitFrom(y.a, y.b)
+    return Math.abs(a.x * b.x + a.y * b.y + a.z * b.z) > 0.9999
+  }
+
   const sameRun = (x: Segment, y: Segment): boolean =>
     x.size === y.size &&
     Math.abs(x.load - y.load) < 1e-9 &&
@@ -81,7 +104,7 @@ export function mergeCollinear(segments: Segment[]): Segment[] {
     // A stack and the drop that feeds it are both vertical but are different components,
     // and merging them would hide the storey crossing from the schedule.
     x.role === y.role &&
-    sameAxis(directionIndex(x.a, x.b), directionIndex(y.a, y.b))
+    parallel(x, y)
 
   /** Walk from `end` while the chain stays straight and undivided. */
   const extend = (start: Segment, fromEnd: 'a' | 'b'): Vec3 => {
@@ -155,7 +178,7 @@ export function deriveFittings(
           system,
           position: point,
           size: maxSize,
-          angle: catalogueAngle(turn),
+          angle: catalogueAngle(turn, system),
           dirIn,
           dirOut,
         })

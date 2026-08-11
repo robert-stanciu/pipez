@@ -179,15 +179,16 @@ function focusWarning(fixtureId?: string): void {
           "
         >
           <option value="rectilinear">Right angles</option>
-          <option value="diagonal">45° diagonals</option>
+          <option value="diagonal">Any bearing</option>
         </select>
       </label>
       <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
         {{
           projectStore.project.settings.drainage.strategy === 'diagonal'
-            ? 'Runs may cut across at 45°, shortening the route. Every corner is still built from 45° bends.'
-            : 'Every run is parallel to a wall. Square corners are built from a pair of 45° bends.'
+            ? 'A horizontal run may head straight for where it drops, at any angle — it is taken only where the length saved beats the extra bends.'
+            : 'Every run is parallel to a wall.'
         }}
+        Turns sharper than 45° are always built from a pair of 45° bends.
       </p>
       <label class="flex items-center justify-between py-1">
         <span class="text-ink-400">Design fall</span>

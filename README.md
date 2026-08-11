@@ -9,11 +9,20 @@ standards, drawn in 2D and 3D, and totalled into a bill of materials.
 Everything runs in the browser. There is no server and no account; projects are files.
 
 ```bash
-npm install
+git clone git@github.com:robert-stanciu/pipez.git
+cd pipez
+npm ci             # or `npm install`
+
 npm run dev        # http://localhost:5173
 npm test           # engine golden cases
+npm run typecheck  # vue-tsc
 npm run build      # typecheck + production build
+npm run preview    # serve the built dist/
 ```
+
+`node_modules/` and `dist/` are not tracked — `npm ci` restores the first from
+`package-lock.json`, and `npm run build` produces the second. There is nothing else to set
+up: no environment variables, no services, no database.
 
 ## How it works
 
@@ -66,28 +75,37 @@ pipe that runs uphill.
 **Drainage has two layout strategies**, chosen in Project settings:
 
 - **Right angles** — every run parallel to a wall. The conventional layout, easiest to support
-  and to find again later.
-- **45° diagonals** — runs may also cut across at exactly 45°, shortening a cross-building
-  route. 45° rather than any angle, because that is the bend the fittings come in. The
-  rectilinear strategy routes on the Hanan grid; the diagonal one overlays a square lattice
-  and only ever cuts a *square* cell corner to corner, so a diagonal is always exactly 45°.
+  and to find again later. Routes on the Hanan grid.
+- **Any bearing** — a horizontal run may head straight for the point where it drops, at
+  whatever angle that happens to be. This needs no special fitting: the pipe never turns
+  while horizontal, so the bearing is simply which way the straight run points, and the only
+  fittings involved are the 45° pairs taking it off the vertical and back onto it. Straight
+  edges between mutually visible points are overlaid on the grid, so the tree still has the
+  grid to branch on — a visibility graph alone has too few places to join, and pushes the
+  solver into a star of separate runs that uses *more* pipe than the L-shaped routes it
+  replaced.
+
+A diagonal is charged for the pair of bends it needs at each end, so it is taken only where
+the length saved beats the fittings. On the sample house every fixture already sits along a
+wall and both strategies agree; give the same room a fixture in the far corner and the
+diagonal run is 7.3 m with 2 bends against 10.1 m with 4.
 
 Only drainage is affected. Supply and cabling stay rectilinear, which is what they are in a
 real building.
 
-**Square corners are built from two 45° bends.** A 90° elbow in a soil pipe stalls solids in
-its sharp inside and cannot be rodded through, so the fitting schedules pair two 45° bends
-with a short leg between them. That is a fact about the pipe, not a drawing convention — the
-run really does cut the corner — so the model carries it: after routing, every square corner
-is chamfered, and the fittings are read back off the finished geometry. What the schedule
-counts is therefore what the drawing shows. Drainage never orders a 90° bend. In plan an
-elbow is a tick across the run, so you see two at a cut corner; in 3D it is the arc the pipe
-actually sweeps through, tangent to both legs.
+**Turns sharper than 45° are built from two 45° bends.** A 90° elbow in a soil pipe stalls
+solids in its sharp inside and cannot be rodded through, so the schedules pair two 45s with a
+short leg between them. That is a fact about the pipe, not a drawing convention — the run
+really does cut the corner — so the model carries it: after routing, every such corner is
+chamfered into two equal halves, and the fittings are read back off the finished geometry.
+What the schedule counts is therefore what the drawing shows, and drainage never orders a
+bend sharper than 45°. In plan an elbow is a tick across the run, so you see two at a cut
+corner; in 3D it is the arc the pipe actually sweeps through, tangent to both legs.
 
 Angles are reported as the part you would order. Graded pipe is never level, so two legs that
 are square in plan meet at about 89°, and a swept half of that computes as 44.4° — both are
-snapped to the catalogue, and anything under 5° is a joint in a straight run rather than a
-fitting.
+snapped to the catalogue (15/30/45 for drainage, 45/90 for pressurised pipe and cable), and
+anything under 5° is a joint in a straight run rather than a fitting.
 
 **Stacks are not placed — they emerge.** A run may only cross a slab inside a wall that exists
 on *both* storeys, and each crossing is charged steeply. Combined with the reuse discount,
@@ -151,11 +169,13 @@ each; a WC upstairs forces the stack to DN100; branches stay under their own sto
 supply and cabling each get their own riser; a misaligned upper storey is reported as
 unreachable with the reason; and a stack is billed as a soil stack.
 
-For corners and strategies: no square corner survives anywhere in the drainage — every turn
-is 45° or less; each swept corner yields exactly two elbows; bends are billed as bends and
-their bodies are not billed a second time as pipe; the rectilinear strategy keeps every run
-on an axis; the diagonal one produces 45° runs *and only 45°*; going diagonally is shorter
-where it should be; and switching strategy leaves supply and cabling alone.
+For corners and strategies: no turn sharper than 45° survives anywhere in the drainage; each
+swept corner yields exactly two elbows; a joint in a graded straight run is not mistaken for
+a fitting; bends are billed as bends and their bodies are not billed a second time as pipe;
+the rectilinear strategy keeps every run on an axis; the any-bearing one produces runs at
+angles that are neither axis-aligned nor 45°; going diagonally is shorter where it should be
+and is declined where it would not pay; and switching strategy leaves supply and cabling
+alone.
 
 `src/three/scene.test.ts` checks the bend geometry itself — that the torus drawn at a corner
 starts exactly where the pipe stops being straight and ends exactly where it resumes, for

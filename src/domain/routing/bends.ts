@@ -19,9 +19,14 @@ import type { Segment } from '../types.ts'
 const pointKey = (p: Vec3): string =>
   `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
 
-/** Only a turn near enough to a right angle needs splitting into two. */
-const SQUARE_MIN = 60
-const SQUARE_MAX = 120
+/**
+ * The sharpest single bend made for drainage.
+ *
+ * Anything sharper is built from two, which is why a square corner becomes a pair of 45s.
+ * A gentler turn — where an any-bearing run meets an axis, say — is one bend and needs no
+ * chamfer at all.
+ */
+const MAX_SINGLE_BEND = 46
 
 /** Face-to-face leg of a 45° bend, near enough, in millimetres. */
 const legFor = (dn: number): number => Math.max(70, dn * 1.2)
@@ -85,8 +90,9 @@ export function sweepCorners(segments: Segment[], nextId: () => string): Segment
     const d2 = unit(point, secondFar)
 
     // The turn the water makes is the supplement of the angle between the two outgoing legs.
+    // Splitting it in two gives an isoceles corner, so each half is exactly half the turn.
     const turn = 180 - angleBetween(d1, d2)
-    if (turn < SQUARE_MIN || turn > SQUARE_MAX) continue
+    if (turn <= MAX_SINGLE_BEND) continue
 
     const trim1 = trims.get(first.id) as Trim
     const trim2 = trims.get(second.id) as Trim

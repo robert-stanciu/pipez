@@ -268,7 +268,7 @@ describe('swept corners', () => {
     return (Math.acos(dot) * 180) / Math.PI
   }
 
-  test('no square corner survives — every turn is 45° or less', () => {
+  test('no turn sharper than 45° survives anywhere in the drainage', () => {
     const waste = solve(sampleProject()).networks.find((n) => n.system === 'waste')!
 
     const key = (p: { x: number; y: number; z: number }) =>
@@ -380,23 +380,82 @@ describe('drainage strategies', () => {
     }
   })
 
-  test('the diagonal strategy produces 45° runs, and only 45°', () => {
+  /** A single fixture diagonally opposite the outlet — the case the strategy is for. */
+  const cornerToCorner = (strategy: 'rectilinear' | 'diagonal') => {
+    const project = scenario({
+      width: 6000,
+      depth: 5000,
+      fixtures: [{ type: 'sink', wallIndex: 0, offset: 400 }],
+      outletAt: { x: 5600, y: 4600 },
+    })
+    project.settings.drainage.strategy = strategy
+    return solve(project).networks.find((n) => n.system === 'waste')!
+  }
+
+  const bearingsOf = (waste: Network) =>
+    waste.segments
+      .filter((s) => s.role === 'branch' && Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) > 1)
+      .map((s) => (((Math.atan2(s.b.y - s.a.y, s.b.x - s.a.x) * 180) / Math.PI + 360) % 180))
+
+  test('the diagonal strategy runs horizontally at whatever bearing is shortest', () => {
+    const bearings = bearingsOf(cornerToCorner('diagonal'))
+    expect(bearings.length).toBeGreaterThan(0)
+
+    // Not axis-aligned, and not a 45 either: the bearing is free, which is the whole point.
+    // A straight horizontal pipe needs no fitting to point where it points; the only fittings
+    // are the 45° pairs taking it off the vertical and back onto it.
+    const offGrid = bearings.filter((b) =>
+      [0, 45, 90, 135, 180].every((fixed) => Math.abs(b - fixed) > 2),
+    )
+    expect(offGrid.length).toBeGreaterThan(0)
+  })
+
+  test('the rectilinear strategy on the same layout stays on the axes', () => {
+    for (const bearing of bearingsOf(cornerToCorner('rectilinear'))) {
+      expect(
+        [0, 90, 180].some((fixed) => Math.abs(bearing - fixed) < 2),
+      ).toBe(true)
+    }
+  })
+
+  test('a diagonal is taken only where it pays for the extra fittings', () => {
+    // Every fixture in the sample house sits along a wall, so the rectilinear route is
+    // already optimal and cutting corners would only add bends. Both strategies should
+    // therefore agree here — a diagonal is a tool, not a reflex.
+    const straight = solve(sampleProject())
+    const diagonal = solve(diagonalProject())
+    const lengthOf = (r: typeof straight) =>
+      r.networks.find((n) => n.system === 'waste')!.totalLength
+    expect(lengthOf(diagonal)).toBeLessThanOrEqual(lengthOf(straight) + 1)
+  })
+
+  test('no single drainage bend is sharper than 45°, whichever strategy is used', () => {
+    for (const strategy of ['rectilinear', 'diagonal'] as const) {
+      const project = sampleProject()
+      project.settings.drainage.strategy = strategy
+      const waste = solve(project).networks.find((n) => n.system === 'waste')!
+      for (const fitting of waste.fittings) {
+        if (fitting.kind !== 'elbow') continue
+        expect(fitting.angle).toBeLessThanOrEqual(45)
+      }
+    }
+  })
+
+  test('a vertical drop still meets a horizontal run through a pair of 45s', () => {
     const waste = solve(diagonalProject()).networks.find((n) => n.system === 'waste')!
 
-    const diagonals = waste.segments.filter((s) => {
-      if (s.role === 'bend') return false
-      const dx = Math.abs(s.a.x - s.b.x)
-      const dy = Math.abs(s.a.y - s.b.y)
-      return dx > 1 && dy > 1
-    })
-    expect(diagonals.length).toBeGreaterThan(0)
+    // Find a drop and confirm the corner at its foot was swept rather than left square.
+    const key = (p: { x: number; y: number; z: number }) =>
+      `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+    const drops = waste.segments.filter((s) => s.role === 'drop')
+    expect(drops.length).toBeGreaterThan(0)
 
-    // Any angle other than 45° would need a fitting that is not made.
-    for (const segment of diagonals) {
-      const dx = Math.abs(segment.a.x - segment.b.x)
-      const dy = Math.abs(segment.a.y - segment.b.y)
-      expect(Math.abs(dx - dy)).toBeLessThan(2)
-    }
+    const bendEnds = new Set(
+      waste.segments.filter((s) => s.role === 'bend').flatMap((s) => [key(s.a), key(s.b)]),
+    )
+    // Every drop that reaches a corner hands off to a bend piece, not straight to a branch.
+    const swept = drops.filter((d) => bendEnds.has(key(d.a)) || bendEnds.has(key(d.b)))
+    expect(swept.length).toBeGreaterThan(0)
   })
 
   test('going diagonally is shorter than going round the corner', () => {

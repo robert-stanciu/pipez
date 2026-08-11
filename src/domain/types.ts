@@ -205,9 +205,13 @@ export interface ServicePoint {
  * How drainage is set out in plan.
  *
  * `rectilinear` keeps every run parallel to a wall — the conventional layout, easiest to
- * support and to find later. `diagonal` also allows runs at exactly 45°, which cuts the
- * length of a cross-building run by up to a sixth; 45° is used rather than any angle because
- * that is the bend the fittings come in.
+ * support and to find again later.
+ *
+ * `diagonal` lets a horizontal run take **any** bearing: straight from where it drops to
+ * where it rises again. No fitting is needed to achieve the angle, because the pipe never
+ * turns while horizontal — the bearing is simply whichever way the straight run points, and
+ * the only fittings involved are the 45° pairs that take it from vertical to horizontal and
+ * back. Shorter runs, fewer fittings, less fall used up.
  */
 export type DrainageStrategy = 'rectilinear' | 'diagonal'
 
