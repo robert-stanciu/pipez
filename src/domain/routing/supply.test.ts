@@ -30,6 +30,9 @@ function house(options: {
   const project = createProject('test')
   if (options.material) project.settings.supply.material = options.material
   if (options.route) project.settings.supply.route = options.route
+  // Pinned rather than left on the app's default, because back entry turns the tails into
+  // wall runs — and these cases are about where the *distribution* sits, not the tails.
+  project.settings.connectionEntry = 'bottom'
 
   const ground = project.levels[0]
   const room = createRoom('Room', { x: 0, y: 0 }, options.width ?? 5000, 3000, ground)
@@ -88,8 +91,10 @@ describe('where the water runs', () => {
       .filter((s) => Math.abs(s.a.z - s.b.z) < 1 && s.role !== 'stack')
       .map((s) => s.a.z)
 
-  test('a new project distributes in the ceiling, as it always has', () => {
-    expect(createProject('t').settings.supply.route).toBe('ceiling')
+  test('a new project distributes under the floor', () => {
+    // The default the app ships with: the pipe goes in with the screed that is being laid
+    // anyway, and the runs to the sanitaryware are the short ones.
+    expect(createProject('t').settings.supply.route).toBe('floor')
   })
 
   test('floor routing puts the distribution in the screed, ceiling routing under the slab', () => {

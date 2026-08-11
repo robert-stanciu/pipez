@@ -88,7 +88,7 @@ const settings = z.object({
   electrical: z
     .object({
       supply: z.enum(['single-phase', 'three-phase']).default('three-phase'),
-      cableRoute: z.enum(['ceiling', 'floor']).default('ceiling'),
+      cableRoute: z.enum(['ceiling', 'floor']).default('floor'),
       voltage: z.number().positive().default(230),
       lineVoltage: z.number().positive().default(400),
       mainBreakerAmps: z.number().positive().default(25),
@@ -103,7 +103,7 @@ const settings = z.object({
     })
     .default({
       supply: 'three-phase',
-      cableRoute: 'ceiling',
+      cableRoute: 'floor',
       voltage: 230,
       lineVoltage: 400,
       mainBreakerAmps: 25,
@@ -121,10 +121,10 @@ const settings = z.object({
       material: z.enum(['copper', 'PPR', 'PEX-AL-PEX', 'PE-X']).default('PPR'),
       // Ceiling distribution is what the solver drew before the choice existed, so a file
       // written without it still comes back as the drawing its author saved.
-      route: z.enum(['ceiling', 'floor']).default('ceiling'),
+      route: z.enum(['ceiling', 'floor']).default('floor'),
       entryPressureKpa: z.number().positive().default(300),
     })
-    .default({ material: 'PPR', route: 'ceiling', entryPressureKpa: 300 }),
+    .default({ material: 'PPR', route: 'floor', entryPressureKpa: 300 }),
   drainage: z.object({
     // Added after the first release, so older files simply get the original behaviour.
     strategy: z.enum(['rectilinear', 'diagonal']).default('rectilinear'),

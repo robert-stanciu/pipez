@@ -31,14 +31,16 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   floorBuildUp: 250,
   ceilingVoid: 300,
   gridPitch: 50,
-  // Under-floor connections by default: the common arrangement, and it needs no wall.
-  connectionEntry: 'bottom',
+  // Behind the appliance by default: water and waste go into the wall and turn vertical
+  // inside it, which is what wall-hung sanitaryware needs and what keeps the slab whole.
+  connectionEntry: 'back',
   electrical: {
     // Three-phase by default: it is what a new supply is, and a single-phase project simply
     // never uses the other two lines.
     supply: 'three-phase',
-    // Ceiling routing by default: it suits a slab you would rather not chase.
-    cableRoute: 'ceiling',
+    // Floor routing by default: the circuits go in with the screed that is being laid anyway,
+    // and the runs to the sockets are the short ones.
+    cableRoute: 'floor',
     voltage: 230,
     lineVoltage: 400,
     mainBreakerAmps: 25,
@@ -55,14 +57,17 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     modulesPerRow: 12,
   },
   standards: 'EN',
-  drainage: { strategy: 'rectilinear', minSlope: 0.01, designSlope: 0.02, maxSlope: 0.05 },
+  // Any bearing by default: a horizontal run heads straight for the point where it drops,
+  // and is charged for the pair of 45° bends at each end, so it is taken only where the
+  // length saved beats the fittings.
+  drainage: { strategy: 'diagonal', minSlope: 0.01, designSlope: 0.02, maxSlope: 0.05 },
   supply: {
     // PP-R by default: it is what a Romanian house is plumbed in, and ø20 — its smallest
     // size, a 13,2 mm bore — is the tap-tail connection that copper would call 15 mm.
     material: 'PPR',
-    // Ceiling distribution by default: it is what the solver has always drawn, so an existing
-    // project comes back looking the way it was left.
-    route: 'ceiling',
+    // Floor distribution by default: short runs to the sanitaryware, and the pipe goes in
+    // with the screed rather than being threaded through a ceiling.
+    route: 'floor',
     // A town main is normally good for 3 bar at the meter; below that the top floor suffers.
     entryPressureKpa: 300,
   },
