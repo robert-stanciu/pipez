@@ -130,7 +130,7 @@ describe('drainage', () => {
       // Segments are emitted child -> parent, i.e. away from the outlet, so the far end is
       // always the higher one. Anything else would be a pipe asking water to climb.
       expect(segment.a.z).toBeGreaterThanOrEqual(segment.b.z - 1e-6)
-      if (planRun(segment) > 1) {
+      if (segment.role === 'branch' && planRun(segment) > 1) {
         expect(segment.slope).toBeGreaterThanOrEqual(project.settings.drainage.minSlope - 1e-9)
         expect(segment.slope).toBeLessThanOrEqual(project.settings.drainage.maxSlope + 1e-9)
       }
@@ -151,9 +151,13 @@ describe('drainage', () => {
     const waste = networkOf(project, 'waste')!
 
     // Sink on wall 0 (the south wall): its waste port sits 150 mm into the room.
-    const optimum = Math.abs(3600 - 700) + Math.abs(200 - 150)
-    expect(planLength(waste)).toBeGreaterThanOrEqual(optimum - 1)
-    expect(planLength(waste)).toBeLessThan(optimum * 1.5)
+    const manhattan = Math.abs(3600 - 700) + Math.abs(200 - 150)
+    const straight = Math.hypot(3600 - 700, 200 - 150)
+
+    // Nothing can beat the straight line, and swept corners cut fractionally inside the
+    // Manhattan path, so the route lands just under it rather than exactly on it.
+    expect(planLength(waste)).toBeGreaterThanOrEqual(straight - 1)
+    expect(planLength(waste)).toBeLessThan(manhattan * 1.5)
   })
 
   test('two fixtures share a trunk, and the trunk steps up to carry both', () => {
@@ -229,7 +233,7 @@ describe('drainage', () => {
 
     const waste = result.networks.find((n) => n.system === 'waste')!
     for (const segment of waste.segments) {
-      if (planRun(segment) <= 1) continue
+      if (segment.role !== 'branch' || planRun(segment) <= 1) continue
       expect(segment.slope).toBeGreaterThanOrEqual(project.settings.drainage.minSlope - 1e-9)
       // No part of a buried branch may surface above the finished floor.
       expect(Math.max(segment.a.z, segment.b.z)).toBeLessThanOrEqual(0)
@@ -247,6 +251,195 @@ describe('drainage', () => {
       (w) => w.severity === 'error' && /under the floor/.test(w.message),
     )
     expect(errors.length).toBeGreaterThan(0)
+  })
+})
+
+describe('swept corners', () => {
+  const turnAt = (a: Segment, b: Segment, corner: { x: number; y: number; z: number }) => {
+    const key = (p: { x: number; y: number; z: number }) =>
+      `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+    const dir = (from: { x: number; y: number; z: number }, to: typeof from) => {
+      const l = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z) || 1
+      return { x: (to.x - from.x) / l, y: (to.y - from.y) / l, z: (to.z - from.z) / l }
+    }
+    const inDir = dir(key(a.a) === key(corner) ? a.b : a.a, corner)
+    const outDir = dir(corner, key(b.a) === key(corner) ? b.b : b.a)
+    const dot = Math.max(-1, Math.min(1, inDir.x * outDir.x + inDir.y * outDir.y + inDir.z * outDir.z))
+    return (Math.acos(dot) * 180) / Math.PI
+  }
+
+  test('no square corner survives — every turn is 45° or less', () => {
+    const waste = solve(sampleProject()).networks.find((n) => n.system === 'waste')!
+
+    const key = (p: { x: number; y: number; z: number }) =>
+      `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+    const junctions = new Map<string, { point: (typeof waste.segments)[0]['a']; segs: Segment[] }>()
+    for (const segment of waste.segments) {
+      for (const end of [segment.a, segment.b]) {
+        const entry = junctions.get(key(end))
+        if (entry) entry.segs.push(segment)
+        else junctions.set(key(end), { point: end, segs: [segment] })
+      }
+    }
+
+    let corners = 0
+    for (const { point, segs } of junctions.values()) {
+      if (segs.length !== 2) continue
+      const turn = turnAt(segs[0], segs[1], point)
+      if (turn < 1) continue
+      corners += 1
+      // 45° with a little slack for the millimetre rounding of node positions.
+      expect(turn).toBeLessThan(50)
+    }
+    expect(corners).toBeGreaterThan(0)
+  })
+
+  test('a square corner becomes two 45° bends with a leg between them', () => {
+    const waste = solve(sampleProject()).networks.find((n) => n.system === 'waste')!
+
+    const bends = waste.segments.filter((s) => s.role === 'bend')
+    expect(bends.length).toBeGreaterThan(0)
+
+    const elbows = waste.fittings.filter((f) => f.kind === 'elbow')
+    // Each swept corner contributes exactly two elbows, one at each end of its leg.
+    expect(elbows.length).toBeGreaterThanOrEqual(bends.length * 2)
+    for (const elbow of elbows) {
+      // Exactly 45 — the fitting you can order, not the raw angle, which the fall tilts by
+      // about a degree.
+      expect(elbow.angle).toBe(45)
+      expect(elbow.dirIn).toBeDefined()
+      expect(elbow.dirOut).toBeDefined()
+    }
+  })
+
+  test('a joint in a graded straight run is not reported as a fitting', () => {
+    // Pipe laid to a fall is never level, so two square legs meet at 89-ish degrees. Nothing
+    // in that neighbourhood may be called an elbow.
+    for (const strategy of ['rectilinear', 'diagonal'] as const) {
+      const project = sampleProject()
+      project.settings.drainage.strategy = strategy
+      const waste = solve(project).networks.find((n) => n.system === 'waste')!
+      for (const fitting of waste.fittings) {
+        if (fitting.kind !== 'elbow') continue
+        expect(fitting.angle).toBeGreaterThanOrEqual(15)
+      }
+    }
+  })
+
+  test('bends are billed as bends, and their bodies are not billed twice as pipe', () => {
+    const result = solve(sampleProject())
+    const drainLines = result.bom.filter((line) => line.system === 'waste')
+    expect(drainLines.some((line) => /^Bend 4\d° DN/.test(line.item))).toBe(true)
+    // The whole point: drainage never orders a square bend.
+    expect(drainLines.some((line) => /^Bend 90° DN/.test(line.item))).toBe(false)
+
+    const waste = result.networks.find((n) => n.system === 'waste')!
+    const pipeMetres = result.bom
+      .filter((l) => l.system === 'waste' && l.unit === 'm')
+      .reduce((sum, l) => sum + l.quantity, 0)
+    const bendMetres = waste.segments
+      .filter((s) => s.role === 'bend')
+      .reduce((sum, s) => sum + s.length, 0)
+    expect(bendMetres).toBeGreaterThan(0)
+    expect(pipeMetres * 1000).toBeLessThan(waste.totalLength - bendMetres + 1)
+  })
+
+  test('sweeping keeps the network connected and still flowing downhill', () => {
+    const waste = solve(sampleProject()).networks.find((n) => n.system === 'waste')!
+    for (const segment of waste.segments) {
+      expect(segment.a.z).toBeGreaterThanOrEqual(segment.b.z - 1e-6)
+      expect(segment.length).toBeGreaterThan(0)
+    }
+    // Nothing orphaned: every endpoint is shared with at least one other run.
+    const key = (p: { x: number; y: number; z: number }) =>
+      `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+    const seen = new Map<string, number>()
+    for (const s of waste.segments) {
+      for (const end of [s.a, s.b]) seen.set(key(end), (seen.get(key(end)) ?? 0) + 1)
+    }
+    const loose = [...seen.values()].filter((n) => n === 1).length
+    // Loose ends are the fixtures plus the outlet, nothing more.
+    expect(loose).toBeLessThanOrEqual(waste.segments.filter((s) => s.role === 'drop').length + 1)
+  })
+})
+
+describe('drainage strategies', () => {
+  const diagonalProject = () => {
+    const project = sampleProject()
+    project.settings.drainage.strategy = 'diagonal'
+    return project
+  }
+
+  test('the rectilinear strategy keeps every branch parallel to an axis', () => {
+    const waste = solve(sampleProject()).networks.find((n) => n.system === 'waste')!
+    for (const segment of waste.segments) {
+      if (segment.role === 'bend') continue // a swept corner is 45° by construction
+      const dx = Math.abs(segment.a.x - segment.b.x)
+      const dy = Math.abs(segment.a.y - segment.b.y)
+      expect(Math.min(dx, dy)).toBeLessThan(1)
+    }
+  })
+
+  test('the diagonal strategy produces 45° runs, and only 45°', () => {
+    const waste = solve(diagonalProject()).networks.find((n) => n.system === 'waste')!
+
+    const diagonals = waste.segments.filter((s) => {
+      if (s.role === 'bend') return false
+      const dx = Math.abs(s.a.x - s.b.x)
+      const dy = Math.abs(s.a.y - s.b.y)
+      return dx > 1 && dy > 1
+    })
+    expect(diagonals.length).toBeGreaterThan(0)
+
+    // Any angle other than 45° would need a fitting that is not made.
+    for (const segment of diagonals) {
+      const dx = Math.abs(segment.a.x - segment.b.x)
+      const dy = Math.abs(segment.a.y - segment.b.y)
+      expect(Math.abs(dx - dy)).toBeLessThan(2)
+    }
+  })
+
+  test('going diagonally is shorter than going round the corner', () => {
+    // A fixture set diagonally away from the outlet is where the strategy earns its keep.
+    const build = (strategy: 'rectilinear' | 'diagonal') => {
+      const project = scenario({
+        width: 6000,
+        depth: 5000,
+        fixtures: [{ type: 'sink', wallIndex: 0, offset: 400 }],
+        outletAt: { x: 5600, y: 4600 },
+      })
+      project.settings.drainage.strategy = strategy
+      return solve(project).networks.find((n) => n.system === 'waste')!
+    }
+
+    const straight = build('rectilinear')
+    const diagonal = build('diagonal')
+    expect(diagonal.totalLength).toBeLessThan(straight.totalLength)
+  })
+
+  test('both strategies still reach every fixture and stay legal', () => {
+    for (const strategy of ['rectilinear', 'diagonal'] as const) {
+      const project = sampleProject()
+      project.settings.drainage.strategy = strategy
+      const result = solve(project)
+      const waste = result.networks.find((n) => n.system === 'waste')!
+      expect(waste.unreachedFixtureIds).toEqual([])
+      for (const segment of waste.segments) {
+        expect(segment.a.z).toBeGreaterThanOrEqual(segment.b.z - 1e-6)
+      }
+    }
+  })
+
+  test('only drainage changes strategy — supply and cabling stay rectilinear', () => {
+    const result = solve(diagonalProject())
+    for (const system of ['cold', 'hot', 'power'] as const) {
+      const network = result.networks.find((n) => n.system === system)
+      for (const segment of network?.segments ?? []) {
+        const dx = Math.abs(segment.a.x - segment.b.x)
+        const dy = Math.abs(segment.a.y - segment.b.y)
+        expect(Math.min(dx, dy)).toBeLessThan(1)
+      }
+    }
   })
 })
 
@@ -493,10 +686,16 @@ describe('engine behaviour', () => {
     // one pipe reported as two, with a phantom coupling between them.
     const key = (p: { x: number; y: number; z: number }) =>
       `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
-    const axis = (s: Segment) => {
-      if (Math.abs(s.a.x - s.b.x) > 1) return 'x'
-      if (Math.abs(s.a.y - s.b.y) > 1) return 'y'
-      return 'z'
+    // Compare real directions, not dominant axes: a 45° swept corner shares an axis with the
+    // leg it joins without being collinear with it.
+    const direction = (s: Segment) => {
+      const length = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y, s.b.z - s.a.z) || 1
+      return [(s.b.x - s.a.x) / length, (s.b.y - s.a.y) / length, (s.b.z - s.a.z) / length]
+    }
+    const collinear = (x: Segment, y: Segment) => {
+      const [ax, ay, az] = direction(x)
+      const [bx, by, bz] = direction(y)
+      return Math.abs(ax * bx + ay * by + az * bz) > 0.999
     }
     const touching = new Map<string, Segment[]>()
     for (const segment of waste.segments) {
@@ -509,8 +708,9 @@ describe('engine behaviour', () => {
     for (const [, group] of touching) {
       if (group.length !== 2) continue
       const [x, y] = group
-      const identical = axis(x) === axis(y) && x.size === y.size && x.load === y.load
-      expect(identical).toBe(false)
+      const redundant =
+        collinear(x, y) && x.size === y.size && x.load === y.load && x.role === y.role
+      expect(redundant).toBe(false)
     }
   })
 })

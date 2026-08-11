@@ -31,7 +31,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   ceilingVoid: 300,
   gridPitch: 50,
   standards: 'EN',
-  drainage: { minSlope: 0.01, designSlope: 0.02, maxSlope: 0.05 },
+  drainage: { strategy: 'rectilinear', minSlope: 0.01, designSlope: 0.02, maxSlope: 0.05 },
 }
 
 export function makeWalls(vertexCount: number): Wall[] {

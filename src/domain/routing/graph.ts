@@ -8,34 +8,43 @@
 
 import type { Vec3 } from '../geometry/vec.ts'
 
-/** Axis directions, indexed. 6 means "no direction yet" — the start of a path. */
-export const DIR_COUNT = 7
-export const DIR_NONE = 6
+/**
+ * Direction encoding.
+ *
+ * A direction is the sign triple of the step, packed into one number — 27 combinations, of
+ * which the all-zero one never occurs. Signs rather than axes because the diagonal routing
+ * strategy needs to distinguish "north-east" from "north", and the search charges for a
+ * change of direction: with an axis-only encoding a 45° turn would look free.
+ *
+ * Every diagonal edge the builders create is at exactly 45°, so a sign triple identifies a
+ * direction unambiguously.
+ */
+export const DIR_NONE = 27
+export const DIR_COUNT = 28
 
-const AXIS_DIRS: ReadonlyArray<Vec3> = [
-  { x: 1, y: 0, z: 0 },
-  { x: -1, y: 0, z: 0 },
-  { x: 0, y: 1, z: 0 },
-  { x: 0, y: -1, z: 0 },
-  { x: 0, y: 0, z: 1 },
-  { x: 0, y: 0, z: -1 },
-]
+const signOf = (value: number): number => (value > 0 ? 1 : value < 0 ? -1 : 0)
 
 export function directionIndex(from: Vec3, to: Vec3): number {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
-  const dz = to.z - from.z
-  const ax = Math.abs(dx)
-  const ay = Math.abs(dy)
-  const az = Math.abs(dz)
-  if (ax >= ay && ax >= az) return dx >= 0 ? 0 : 1
-  if (ay >= az) return dy >= 0 ? 2 : 3
-  return dz >= 0 ? 4 : 5
+  const sx = signOf(Math.round(to.x - from.x))
+  const sy = signOf(Math.round(to.y - from.y))
+  const sz = signOf(Math.round(to.z - from.z))
+  return (sx + 1) * 9 + (sy + 1) * 3 + (sz + 1)
 }
 
-export const axisOf = (dir: number): number => (dir >= 6 ? -1 : dir >> 1)
+export function dirVector(dir: number): Vec3 {
+  if (dir < 0 || dir >= 27) return { x: 0, y: 0, z: 0 }
+  return { x: ((dir / 9) | 0) - 1, y: (((dir / 3) | 0) % 3) - 1, z: (dir % 3) - 1 }
+}
 
-export const dirVector = (dir: number): Vec3 => AXIS_DIRS[dir] ?? { x: 0, y: 0, z: 0 }
+/** True when two directions lie on the same line, whichever way each points. */
+export function sameAxis(a: number, b: number): boolean {
+  const va = dirVector(a)
+  const vb = dirVector(b)
+  return (
+    (va.x === vb.x && va.y === vb.y && va.z === vb.z) ||
+    (va.x === -vb.x && va.y === -vb.y && va.z === -vb.z)
+  )
+}
 
 export interface GraphEdge {
   to: number
@@ -92,7 +101,9 @@ export class RouteGraph {
     if (a === b) return -1
     const pa = this.nodes[a]
     const pb = this.nodes[b]
-    const length = Math.abs(pb.x - pa.x) + Math.abs(pb.y - pa.y) + Math.abs(pb.z - pa.z)
+    // True length, not Manhattan: a 45° diagonal has to be cheaper than the two legs it
+    // replaces, or the diagonal strategy would never prefer one.
+    const length = Math.hypot(pb.x - pa.x, pb.y - pa.y, pb.z - pa.z)
     if (length === 0) return -1
     const id = this.edgeSeq++
     const cost = length * weight

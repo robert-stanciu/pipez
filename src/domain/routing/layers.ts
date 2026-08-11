@@ -18,7 +18,13 @@
  * search space — the electrical solver needs wall zones and the ceiling plane together.
  */
 
-import { bounds, pointInPolygon, unionBounds, type Bounds } from '../geometry/polygon.ts'
+import {
+  bounds,
+  expandBounds,
+  pointInPolygon,
+  unionBounds,
+  type Bounds,
+} from '../geometry/polygon.ts'
 import { closestPointOnSegment, dist2, type Vec2 } from '../geometry/vec.ts'
 import {
   centrelineOutline,
@@ -140,7 +146,18 @@ export interface PlanLines {
  * ground floor exists at the same x and y upstairs, so a riser is a single edge between two
  * nodes rather than a search for a near-match.
  */
-export function planLines(project: Project, attachAt: Vec2[] = []): PlanLines {
+export function planLines(
+  project: Project,
+  attachAt: Vec2[] = [],
+  /**
+   * Overlay a square lattice at this pitch on top of the geometry lines.
+   *
+   * Only the diagonal strategy needs it. A Hanan grid has cells of every shape, so a
+   * corner-to-corner edge across one would be at an arbitrary angle and unbuildable; a square
+   * cell gives an edge at exactly 45°, which is a fitting you can actually buy.
+   */
+  uniformPitch?: number,
+): PlanLines {
   const xSeed: number[] = []
   const ySeed: number[] = []
   const push = (p: Vec2) => {
@@ -155,6 +172,14 @@ export function planLines(project: Project, attachAt: Vec2[] = []): PlanLines {
     }
   }
   for (const point of project.servicePoints) push(point.position)
+
+  if (uniformPitch && uniformPitch > 0 && project.rooms.length > 0) {
+    const box = expandBounds(unionBounds(project.rooms.map((r) => bounds(outerOutline(r)))), uniformPitch)
+    // Anchored on the origin, so the lattice is the same wherever the building sits.
+    const from = (v: number) => Math.floor(v / uniformPitch) * uniformPitch
+    for (let x = from(box.min.x); x <= box.max.x; x += uniformPitch) xSeed.push(x)
+    for (let y = from(box.min.y); y <= box.max.y; y += uniformPitch) ySeed.push(y)
+  }
 
   // Coarsen until one storey's lattice fits the budget. Attachment points are seeded first,
   // and merging only ever drops a coordinate already within tolerance of a kept one.
@@ -182,6 +207,8 @@ export interface PlaneGridOptions {
   allowLoadBearingPenetration?: boolean
   /** Restrict the layer to points inside a wall — used for in-wall horizontal runs. */
   wallsOnly?: boolean
+  /** Also connect square cells corner to corner, giving runs at exactly 45°. */
+  diagonals?: boolean
 }
 
 export function buildPlaneGrid(
@@ -248,6 +275,20 @@ export function buildPlaneGrid(
         iy + 1 < ys.length ? nodeAt[ix][iy + 1] : null,
       ]
       for (const to of neighbours) {
+        if (to === null) continue
+        const weight = spanWeight(planPos.get(from) as Vec2, planPos.get(to) as Vec2)
+        if (weight !== null) graph.connect(from, to, weight)
+      }
+
+      if (!options.diagonals || ix + 1 >= xs.length) continue
+      const dx = xs[ix + 1] - xs[ix]
+      // Both cell diagonals, but only across a square cell: anything else would be a run at
+      // an angle no fitting is made in.
+      for (const step of [1, -1]) {
+        const jy = iy + step
+        if (jy < 0 || jy >= ys.length) continue
+        if (Math.abs(Math.abs(ys[jy] - ys[iy]) - dx) > 1) continue
+        const to = nodeAt[ix + 1][jy]
         if (to === null) continue
         const weight = spanWeight(planPos.get(from) as Vec2, planPos.get(to) as Vec2)
         if (weight !== null) graph.connect(from, to, weight)
@@ -405,8 +446,12 @@ export function linkStoreys(
 }
 
 /**
- * Attach a terminal point to a layer: a short horizontal spur to the layer node's plan
- * position, then a vertical riser. Returns the graph node representing the terminal.
+ * Attach a terminal point to a layer: a short spur across to the layer node's plan position,
+ * then a vertical riser. Returns the graph node representing the terminal.
+ *
+ * The spur is broken into one move per axis. A single hop covering both would be a diagonal
+ * at whatever angle the offset happens to be — not something anyone can fit — and the
+ * coincident cases collapse to the same node, so the chain stays connected either way.
  */
 export function attachTerminal(
   graph: RouteGraph,
@@ -424,9 +469,10 @@ export function attachTerminal(
     return terminal
   }
 
-  // Spur across, then rise: keeps the run rectilinear instead of cutting a diagonal.
-  const elbow = graph.node({ x: layerPos.x, y: layerPos.y, z: point.z })
-  graph.connect(terminal, elbow, weight)
-  graph.connect(elbow, layerNode, weight)
+  const alongX = graph.node({ x: layerPos.x, y: point.y, z: point.z })
+  const overhead = graph.node({ x: layerPos.x, y: layerPos.y, z: point.z })
+  graph.connect(terminal, alongX, weight)
+  graph.connect(alongX, overhead, weight)
+  graph.connect(overhead, layerNode, weight)
   return terminal
 }

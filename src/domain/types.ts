@@ -201,7 +201,18 @@ export interface ServicePoint {
 
 /* ------------------------------------------------------------------- project */
 
+/**
+ * How drainage is set out in plan.
+ *
+ * `rectilinear` keeps every run parallel to a wall — the conventional layout, easiest to
+ * support and to find later. `diagonal` also allows runs at exactly 45°, which cuts the
+ * length of a cross-building run by up to a sixth; 45° is used rather than any angle because
+ * that is the bend the fittings come in.
+ */
+export type DrainageStrategy = 'rectilinear' | 'diagonal'
+
 export interface DrainageSettings {
+  strategy: DrainageStrategy
   /** Minimum acceptable fall; below this the run is flagged. */
   minSlope: number
   /** What the solver aims for. */
@@ -250,7 +261,7 @@ export type FittingKind = 'elbow' | 'tee' | 'reducer' | 'coupling' | 'trap' | 's
  * schedule. A `stack` crosses a storey — a soil stack, a rising main, a cable riser — and is
  * sized by the stack tables rather than the branch ones.
  */
-export type SegmentRole = 'branch' | 'stack' | 'drop'
+export type SegmentRole = 'branch' | 'stack' | 'drop' | 'bend'
 
 export interface Segment {
   id: Id
@@ -276,6 +287,9 @@ export interface Fitting {
   size: number
   /** Turn angle in degrees for elbows. */
   angle?: number
+  /** Unit direction the run arrives on, and the one it leaves on. Elbows only. */
+  dirIn?: Vec3
+  dirOut?: Vec3
 }
 
 export type WarningSeverity = 'error' | 'warning' | 'info'

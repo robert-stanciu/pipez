@@ -85,6 +85,45 @@ const runs = computed<Run[]>(() =>
   ),
 )
 
+/**
+ * Elbows, drawn as a tick across the pipe.
+ *
+ * A swept drainage corner is two 45° bends with a leg between them, so you see two ticks
+ * either side of the cut corner — which is exactly what gets ordered and installed. A tick
+ * across the run reads as a fitting without competing with the pipe itself for space.
+ */
+const elbows = computed(() =>
+  routing.result.networks
+    .filter((network) => view.isSystemVisible(network.system))
+    .flatMap((network) =>
+      network.fittings.flatMap((fitting) => {
+        if (fitting.kind !== 'elbow' || !fitting.dirIn || !fitting.dirOut) return []
+        if (!storeyContains(levels.active.value, fitting.position.z, fitting.position.z)) return []
+
+        // Bisector of the turn, in plan. A purely vertical bend has none, and needs no tick.
+        const bx = fitting.dirIn.x + fitting.dirOut.x
+        const by = fitting.dirIn.y + fitting.dirOut.y
+        const length = Math.hypot(bx, by)
+        if (length < 1e-6) return []
+
+        const half = Math.max(45, fitting.size * 0.8)
+        // The tick lies across the run: perpendicular to the bisector.
+        const tx = (-by / length) * half
+        const ty = (bx / length) * half
+        return [
+          {
+            key: fitting.id,
+            system: network.system,
+            x1: fitting.position.x - tx,
+            y1: -(fitting.position.y - ty),
+            x2: fitting.position.x + tx,
+            y2: -(fitting.position.y + ty),
+          },
+        ]
+      }),
+    ),
+)
+
 /** Risers and drops — the parts of the network that go up or down. */
 const verticals = computed(() =>
   visible.value.flatMap((system) =>
@@ -120,6 +159,19 @@ const verticals = computed(() =>
         opacity="0.9"
       />
     </g>
+
+    <line
+      v-for="elbow in elbows"
+      :key="elbow.key"
+      :x1="elbow.x1"
+      :y1="elbow.y1"
+      :x2="elbow.x2"
+      :y2="elbow.y2"
+      stroke="#0a0e14"
+      stroke-width="26"
+      stroke-linecap="round"
+      opacity="0.85"
+    />
 
     <!-- A drop is a ring; a stack passing through the storey gets a filled centre and a
          cross, the conventional way to say "this continues to the floors above and below". -->

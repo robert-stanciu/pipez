@@ -160,7 +160,7 @@ export function shortestPathToSet(
   for (let i = 1; i < path.length; i++) {
     const a = graph.position(path[i - 1])
     const b = graph.position(path[i])
-    length += Math.abs(b.x - a.x) + Math.abs(b.y - a.y) + Math.abs(b.z - a.z)
+    length += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
   }
 
   return { path, edgeIds, cost: dist[goalState], length }

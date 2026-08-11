@@ -6,12 +6,24 @@
  * with a sphere at every junction so bends read as continuous pipe rather than as a gap
  * between two cylinders.
  */
-import { CylinderGeometry, MeshStandardMaterial, SphereGeometry, Vector3 } from 'three'
+import {
+  CylinderGeometry,
+  MeshStandardMaterial,
+  SphereGeometry,
+  TorusGeometry,
+  Vector3,
+} from 'three'
 import { computed } from 'vue'
 
 import { SYSTEM_COLOR, SYSTEM_KINDS, type Segment, type SystemKind } from '../../domain/types.ts'
 import { storeyContains, useLevels } from '../../composables/useLevels.ts'
-import { segmentPlacement, segmentRadius, toScene } from '../../three/scene.ts'
+import {
+  bendPlacement,
+  fittingRadius,
+  segmentPlacement,
+  segmentRadius,
+  toScene,
+} from '../../three/scene.ts'
 import { useRoutingStore } from '../../stores/routing.ts'
 import { useViewStore } from '../../stores/view.ts'
 
@@ -58,29 +70,62 @@ const runs = computed(() =>
   ),
 )
 
-/** A ball at each fitting, sized to the pipe, so corners look joined. */
-const joints = computed(() =>
+const shownFittings = computed(() =>
   routing.result.networks
     .filter((network) => view.isSystemVisible(network.system))
     .flatMap((network) =>
-      network.fittings
-        .filter(
-          (fitting) =>
-            fitting.kind !== 'terminal' &&
-            withinStorey(fitting.position.z, fitting.position.z),
-        )
-        .map((fitting) => {
-          const radius =
-            network.system === 'power' ? 0.011 : Math.max(0.009, (fitting.size / 2) * 0.0012)
-          return {
-            key: fitting.id,
-            system: network.system,
-            position: toScene(fitting.position),
-            scale: new Vector3(radius, radius, radius),
-          }
-        }),
+      network.fittings.filter(
+        (fitting) =>
+          fitting.kind !== 'terminal' && withinStorey(fitting.position.z, fitting.position.z),
+      ),
     ),
 )
+
+/**
+ * Elbows are drawn as the arc the pipe actually sweeps through, tangent to both legs.
+ *
+ * Drainage corners are built from a pair of 45° bends, so this is where that shows: two
+ * distinct fittings at a cut corner rather than one square knuckle.
+ */
+const bends = computed(() =>
+  shownFittings.value.flatMap((fitting) => {
+    if (fitting.kind !== 'elbow') return []
+    const placement = bendPlacement(fitting)
+    if (!placement) return []
+    return [{ key: fitting.id, system: fitting.system, placement }]
+  }),
+)
+
+/** Tees and couplings stay as a ball — there is no arc to draw. */
+const joints = computed(() =>
+  shownFittings.value.flatMap((fitting) => {
+    if (fitting.kind === 'elbow') return []
+    const radius = fittingRadius(fitting) * 1.4
+    return [
+      {
+        key: fitting.id,
+        system: fitting.system,
+        position: toScene(fitting.position),
+        scale: new Vector3(radius, radius, radius),
+      },
+    ]
+  }),
+)
+
+/**
+ * One torus per distinct shape rather than per fitting. A building has a handful of pipe
+ * sizes and two or three bend angles, so the cache holds a few entries and every elbow of the
+ * same kind shares one buffer.
+ */
+const torusCache = new Map<string, TorusGeometry>()
+function torusFor(placement: { radius: number; tube: number; arc: number }): TorusGeometry {
+  const key = `${placement.radius.toFixed(4)}|${placement.tube.toFixed(4)}|${placement.arc.toFixed(3)}`
+  const existing = torusCache.get(key)
+  if (existing) return existing
+  const created = new TorusGeometry(placement.radius, placement.tube, 8, 14, placement.arc)
+  torusCache.set(key, created)
+  return created
+}
 </script>
 
 <template>
@@ -93,6 +138,14 @@ const joints = computed(() =>
       :position="run.position"
       :rotation="run.rotation"
       :scale="run.scale"
+    />
+    <TresMesh
+      v-for="bend in bends"
+      :key="bend.key"
+      :geometry="torusFor(bend.placement)"
+      :material="materials[bend.system]"
+      :position="bend.placement.position"
+      :quaternion="bend.placement.quaternion"
     />
     <TresMesh
       v-for="joint in joints"

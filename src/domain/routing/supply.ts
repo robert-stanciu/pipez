@@ -207,7 +207,7 @@ export function routeSupply(
     // Only an edge that actually crosses a slab is a rising main. A tall vertical run inside
     // one storey is just a drop from the ceiling void down to a low tap.
     const isRiser = slabEdges.has(tree.edgeToParent[child])
-    const flat = Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+    const flat = Math.hypot(a.x - b.x, a.y - b.y)
     segments.push({
       id: nextId(),
       system,

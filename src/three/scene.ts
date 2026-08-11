@@ -8,13 +8,13 @@
  * both TresJS props and three's own `Object3D` accept, so nothing has to be converted twice.
  */
 
-import { Euler, Quaternion, Vector3 } from 'three'
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
 
 import { fixtureDef } from '../domain/catalog/fixtures.ts'
 import { edgesOf } from '../domain/geometry/polygon.ts'
 import { dist2, type Vec2, type Vec3 } from '../domain/geometry/vec.ts'
 import { fixtureFrame, wallsOf } from '../domain/model.ts'
-import type { Fixture, Opening, Project, Room, Segment } from '../domain/types.ts'
+import type { Fitting, Fixture, Opening, Project, Room, Segment } from '../domain/types.ts'
 
 /** Millimetres to metres. */
 export const S = 0.001
@@ -62,6 +62,64 @@ export function segmentPlacement(a: Vec3, b: Vec3): Placement {
 export function segmentRadius(segment: Segment): number {
   if (segment.system === 'power') return 0.008
   return Math.max(0.006, (segment.size / 2) * S)
+}
+
+export const fittingRadius = (fitting: Fitting): number =>
+  fitting.system === 'power' ? 0.008 : Math.max(0.006, (fitting.size / 2) * S)
+
+/** Directions transform the same way points do; the mapping is linear. */
+const toSceneDir = (d: Vec3): Vector3 => new Vector3(d.x, d.z, -d.y).normalize()
+
+export interface BendPlacement {
+  /** Centre of the arc, not the corner. */
+  position: Vector3
+  quaternion: Quaternion
+  /** Radius of the arc's centreline. */
+  radius: number
+  tube: number
+  /** Swept angle, radians. */
+  arc: number
+}
+
+/**
+ * Place a torus so it forms the actual bend a run makes at a corner.
+ *
+ * A `TorusGeometry` arc lies in its local XY plane, starts on local +X and sweeps
+ * anticlockwise about local +Z. So the frame is built from the geometry of the turn: local +X
+ * points from the arc centre to where the pipe enters, and local +Z is the axis the run turns
+ * about. The result is tangent to both legs, which is why it reads as a fitting rather than
+ * as a ball dropped on a corner.
+ */
+export function bendPlacement(fitting: Fitting): BendPlacement | null {
+  if (!fitting.dirIn || !fitting.dirOut) return null
+
+  const inbound = toSceneDir(fitting.dirIn)
+  const outbound = toSceneDir(fitting.dirOut)
+  const turn = Math.acos(Math.max(-1, Math.min(1, inbound.dot(outbound))))
+  if (!Number.isFinite(turn) || turn < 1e-3) return null
+
+  const tube = fittingRadius(fitting)
+  const radius = tube * 2.2
+  const corner = toScene(fitting.position)
+
+  // Where the arc leaves the straight run, either side of the corner.
+  const tangent = radius * Math.tan(turn / 2)
+  const entry = corner.clone().addScaledVector(inbound, -tangent)
+
+  // Perpendicular to the inbound leg, pointing into the turn.
+  const inward = outbound.clone().addScaledVector(inbound, -inbound.dot(outbound))
+  if (inward.lengthSq() < 1e-12) return null
+  inward.normalize()
+
+  const centre = entry.clone().addScaledVector(inward, radius)
+  const xAxis = entry.clone().sub(centre).normalize()
+  const zAxis = new Vector3().crossVectors(inbound, outbound).normalize()
+  const yAxis = new Vector3().crossVectors(zAxis, xAxis).normalize()
+
+  const quaternion = new Quaternion().setFromRotationMatrix(
+    new Matrix4().makeBasis(xAxis, yAxis, zAxis),
+  )
+  return { position: centre, quaternion, radius, tube, arc: turn }
 }
 
 /* --------------------------------------------------------------------- walls */

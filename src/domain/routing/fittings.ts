@@ -6,9 +6,51 @@
 
 import { dist3, type Vec3 } from '../geometry/vec.ts'
 import type { BomLine, Circuit, Fitting, Network, Segment, SystemKind } from '../types.ts'
-import { directionIndex } from './graph.ts'
+import { angleBetween } from './bends.ts'
+import { directionIndex, sameAxis } from './graph.ts'
 
 const pointKey = (p: Vec3): string => `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+
+/** The end of a segment that is not this point. */
+const otherEnd = (segment: Segment, point: Vec3): Vec3 =>
+  pointKey(segment.a) === pointKey(point) ? segment.b : segment.a
+
+function unitFrom(from: Vec3, to: Vec3): Vec3 {
+  const length = dist3(from, to)
+  if (length < 1e-9) return { x: 0, y: 0, z: 0 }
+  return { x: (to.x - from.x) / length, y: (to.y - from.y) / length, z: (to.z - from.z) / length }
+}
+
+/**
+ * Below this a junction is a joint in a straight run, not a change of direction.
+ *
+ * Graded pipe is never quite level, so two legs that are square in plan meet at a degree or
+ * so off ninety. Calling that an elbow would put a fitting on the schedule that does not
+ * exist and that nobody would install.
+ */
+const STRAIGHT_ENOUGH = 5
+
+/** Angles fittings are actually made in. */
+const CATALOGUE_ANGLES = [45, 90]
+
+/**
+ * Report the fitting you would order, not the angle the geometry happens to compute.
+ *
+ * A corner swept at 45° comes out as 44.4° once the fall is taken into account; the part in
+ * the merchant's rack is still a 45.
+ */
+function catalogueAngle(degrees: number): number {
+  let best = Math.round(degrees)
+  let bestGap = Infinity
+  for (const candidate of CATALOGUE_ANGLES) {
+    const gap = Math.abs(candidate - degrees)
+    if (gap < bestGap && gap <= 5) {
+      bestGap = gap
+      best = candidate
+    }
+  }
+  return best
+}
 
 /**
  * Collapse chains of collinear segments that carry the same load and size.
@@ -39,7 +81,7 @@ export function mergeCollinear(segments: Segment[]): Segment[] {
     // A stack and the drop that feeds it are both vertical but are different components,
     // and merging them would hide the storey crossing from the schedule.
     x.role === y.role &&
-    (directionIndex(x.a, x.b) >> 1) === (directionIndex(y.a, y.b) >> 1)
+    sameAxis(directionIndex(x.a, x.b), directionIndex(y.a, y.b))
 
   /** Walk from `end` while the chain stays straight and undivided. */
   const extend = (start: Segment, fromEnd: 'a' | 'b'): Vec3 => {
@@ -101,10 +143,22 @@ export function deriveFittings(
     }
     if (touching.length === 2) {
       const [first, second] = touching
-      const axisA = directionIndex(first.a, first.b) >> 1
-      const axisB = directionIndex(second.a, second.b) >> 1
-      if (axisA !== axisB) {
-        fittings.push({ id: nextId(), kind: 'elbow', system, position: point, size: maxSize, angle: 90 })
+      // Directions of travel through the junction: in along one leg, out along the other.
+      const dirIn = unitFrom(otherEnd(first, point), point)
+      const dirOut = unitFrom(point, otherEnd(second, point))
+      const turn = angleBetween(dirIn, dirOut)
+
+      if (turn >= STRAIGHT_ENOUGH) {
+        fittings.push({
+          id: nextId(),
+          kind: 'elbow',
+          system,
+          position: point,
+          size: maxSize,
+          angle: catalogueAngle(turn),
+          dirIn,
+          dirOut,
+        })
       } else if (maxSize !== minSize) {
         fittings.push({ id: nextId(), kind: 'reducer', system, position: point, size: maxSize })
       } else {
@@ -156,6 +210,9 @@ export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
 
   for (const network of networks) {
     for (const segment of network.segments) {
+      // The short leg between a pair of 45° bends is part of the fittings, which are counted
+      // below — billing it as pipe as well would order the same 150 mm twice.
+      if (segment.role === 'bend') continue
       const noun = segment.role === 'stack' ? STACK_LABEL : PIPE_LABEL
       const item =
         network.system === 'power'
@@ -168,10 +225,12 @@ export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
       // Cables have no fittings worth ordering — the run is continuous to the outlet.
       if (network.system === 'power') continue
       const suffix = fitting.size > 0 ? ` DN${fitting.size}` : ''
-      bump(
-        { system: network.system, item: `${FITTING_LABEL[fitting.kind]}${suffix}`, unit: 'pc' },
-        1,
-      )
+      // An elbow is bought by its angle: a 45° and a 90° are different parts.
+      const label =
+        fitting.kind === 'elbow' && fitting.angle
+          ? `Bend ${fitting.angle}°`
+          : FITTING_LABEL[fitting.kind]
+      bump({ system: network.system, item: `${label}${suffix}`, unit: 'pc' }, 1)
     }
   }
 

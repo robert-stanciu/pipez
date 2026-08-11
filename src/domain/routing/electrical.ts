@@ -318,7 +318,7 @@ export function routeElectrical(
       // Only a slab crossing is a riser; a long vertical inside one storey is the drop from
       // the wall zone down to a socket.
       const isRiser = slabEdges.has(tree.edgeToParent[child])
-      const flat = Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+      const flat = Math.hypot(a.x - b.x, a.y - b.y)
       segments.push({
         id: nextId(),
         system: 'power',

@@ -83,6 +83,8 @@ const settings = z.object({
   gridPitch: z.number().positive(),
   standards: z.literal('EN'),
   drainage: z.object({
+    // Added after the first release, so older files simply get the original behaviour.
+    strategy: z.enum(['rectilinear', 'diagonal']).default('rectilinear'),
     minSlope: z.number().positive(),
     designSlope: z.number().positive(),
     maxSlope: z.number().positive(),

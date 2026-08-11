@@ -39,6 +39,7 @@ import {
   stackDiameter,
 } from '../standards/en12056.ts'
 import type { Level, Network, Project, RoutingWarning, Segment } from '../types.ts'
+import { sweepCorners } from './bends.ts'
 import { deriveFittings, mergeCollinear } from './fittings.ts'
 import { RouteGraph } from './graph.ts'
 import { buildPlaneGrid, linkStoreys, planLines, type Layer, type LevelShapes } from './layers.ts'
@@ -58,6 +59,15 @@ const MIN_INVERT_DEPTH = 60
  * halfway across the building to avoid one.
  */
 const SLAB_CROSSING_WEIGHT = 14
+
+/**
+ * Cell size of the square lattice the diagonal strategy routes on.
+ *
+ * Fine enough to hug the geometry, coarse enough that the graph stays in the low thousands
+ * of nodes. Only square cells get a corner-to-corner edge, so this is what sets how often a
+ * 45° move is available.
+ */
+const DIAGONAL_LATTICE_PITCH = 250
 
 export interface SystemSolution {
   network: Network
@@ -98,9 +108,13 @@ export function routeWaste(
 
   /* ------------------------------------------------------- one plane per storey */
 
+  const diagonal = project.settings.drainage.strategy === 'diagonal'
+
   const graph = new RouteGraph()
   const attachAt: Vec2[] = [...ports.map((p) => ({ x: p.position.x, y: p.position.y })), outlet.position]
-  const lines = planLines(project, attachAt)
+  // The diagonal strategy needs square cells to cut across, so it overlays a regular lattice
+  // on the geometry lines; the rectilinear one has no use for the extra nodes.
+  const lines = planLines(project, attachAt, diagonal ? DIAGONAL_LATTICE_PITCH : undefined)
 
   // Each storey's drainage plane sits just under its own floor. The elevation is nominal —
   // real inverts are assigned below — but it fixes how far a stack drops between storeys.
@@ -113,6 +127,7 @@ export function routeWaste(
       buildPlaneGrid(graph, project, shape, {
         z: level.elevation - MIN_INVERT_DEPTH,
         lines,
+        diagonals: diagonal,
         // Below a floor a pipe crosses walls freely; the penalty just discourages weaving.
         penetrationWeight: 1.5,
         allowLoadBearingPenetration: true,
@@ -340,17 +355,37 @@ export function routeWaste(
       continue
     }
 
+    const size = Math.max(port.dn, branchDiameter(terminal.load, port.dn))
+    const foot = { x: port.position.x, y: port.position.y, z: branchZ }
     segments.push({
       id: nextId(),
       system: 'waste',
       a: port.position,
-      b: { x: port.position.x, y: port.position.y, z: branchZ },
-      size: Math.max(port.dn, branchDiameter(terminal.load, port.dn)),
+      b: foot,
+      size,
       load: terminal.load,
       length: drop,
       role: 'drop',
       slope: 1,
     })
+
+    // The branch node is not always exactly under the trap — on the diagonal strategy the
+    // lattice may put it a cell away — so close the gap with a short tail rather than
+    // leaving the drop hanging next to the network.
+    const node = graph.position(terminal.node)
+    if (Math.hypot(node.x - foot.x, node.y - foot.y) > 1) {
+      segments.push({
+        id: nextId(),
+        system: 'waste',
+        a: foot,
+        b: { x: node.x, y: node.y, z: branchZ },
+        size,
+        load: terminal.load,
+        length: Math.hypot(node.x - foot.x, node.y - foot.y),
+        role: 'branch',
+        slope: 0,
+      })
+    }
 
     // Only the horizontal part of the run counts against the unvented limit — a stack does
     // not siphon a trap the way a long flat branch does.
@@ -368,15 +403,17 @@ export function routeWaste(
     }
   }
 
-  const merged = mergeCollinear(segments)
-  const fittings = deriveFittings(merged, 'waste', nextId)
+  // Merge first so the corners are real corners, then sweep them, then read the fittings off
+  // the finished geometry — that way the elbows counted are the elbows drawn.
+  const swept = sweepCorners(mergeCollinear(segments), nextId)
+  const fittings = deriveFittings(swept, 'waste', nextId)
 
   return {
     network: {
       system: 'waste',
-      segments: merged,
+      segments: swept,
       fittings,
-      totalLength: merged.reduce((sum, s) => sum + s.length, 0),
+      totalLength: swept.reduce((sum, s) => sum + s.length, 0),
       unreachedFixtureIds: tree.unreached.map((t) => t.ref),
     },
     warnings,
@@ -408,7 +445,7 @@ function splitPath(
       horizontal[node] = horizontal[parent]
     } else {
       rise[node] = rise[parent]
-      horizontal[node] = horizontal[parent] + Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
+      horizontal[node] = horizontal[parent] + Math.hypot(a.x - b.x, a.y - b.y)
     }
   }
   return { rise, horizontal }
