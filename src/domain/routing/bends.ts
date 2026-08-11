@@ -55,6 +55,142 @@ export function angleBetween(a: Vec3, b: Vec3): number {
 }
 
 /**
+ * How far off the outgoing line the main run may arrive before the junction counts as a
+ * corner that also collects a branch, rather than a branch joining a straight run. The two
+ * need different constructions, but both are handled.
+ */
+const THROUGH_TOLERANCE = 20
+
+/** A branch already entering this obliquely needs no help. */
+const OBLIQUE_ENOUGH = 46
+
+/** Beyond this the branch is running back against the flow; sweeping it would not fix that. */
+const AGAINST_THE_FLOW = 100
+
+/**
+ * Swing branch connections round to enter in the direction of flow.
+ *
+ * A square tee on a drain is wrong for the same reason a square elbow is: the incoming flow
+ * hits the far wall of the main run, throws the stream back on itself and drops its solids at
+ * the junction. Every schedule joins a branch with a 45° oblique tee instead, entering
+ * downstream.
+ *
+ * The geometry is forced, once you insist on it: the branch cannot enter the *same* point at
+ * 45°, so the junction slides `leg` downstream along the trunk while the branch stops `leg`
+ * short, and the diagonal between them lands at 45° to both. For a branch arriving square
+ * that is a 45° bend followed by a 45° tee, which is exactly the detail on the drawing.
+ *
+ * Segments are assumed to run a → b downstream, which is how the drainage solver emits them.
+ */
+export function sweepJunctions(segments: Segment[], nextId: () => string): Segment[] {
+  const incident = new Map<string, { point: Vec3; segments: Segment[] }>()
+  for (const segment of segments) {
+    for (const end of [segment.a, segment.b]) {
+      const key = pointKey(end)
+      const entry = incident.get(key)
+      if (entry) entry.segments.push(segment)
+      else incident.set(key, { point: end, segments: [segment] })
+    }
+  }
+
+  /** New endpoints, gathered first and applied together so two junctions cannot fight. */
+  const moved = new Map<string, { a?: Vec3; b?: Vec3 }>()
+  const inserted: Segment[] = []
+
+  const junctions = [...incident.entries()].sort(([l], [r]) => l.localeCompare(r))
+
+  for (const [key, { point, segments: touching }] of junctions) {
+    if (touching.length < 3) continue
+
+    const leaving = touching.filter((s) => pointKey(s.a) === key)
+    const arriving = touching.filter((s) => pointKey(s.b) === key)
+    // One way out, more than one way in, or the flow here is not a simple confluence.
+    if (leaving.length !== 1 || arriving.length < 2) continue
+
+    const outgoing = leaving[0]
+    const downstream = unit(point, outgoing.b)
+    if (downstream.x === 0 && downstream.y === 0 && downstream.z === 0) continue
+
+    // Travel direction of each arriving run, and how far off the trunk's line it is.
+    const approach = arriving.map((segment) => ({
+      segment,
+      direction: unit(segment.a, point),
+    }))
+    const turnOf = (direction: Vec3) => angleBetween(direction, downstream)
+
+    // The main run carries straight on; the rest are branches. Alignment decides, and where
+    // two arrive equally square the bigger pipe is the one that goes through.
+    const through = [...approach].sort(
+      (l, r) => turnOf(l.direction) - turnOf(r.direction) || r.segment.size - l.segment.size,
+    )[0]
+
+    const branches = approach.filter(
+      (entry) =>
+        entry !== through &&
+        turnOf(entry.direction) > OBLIQUE_ENOUGH &&
+        turnOf(entry.direction) <= AGAINST_THE_FLOW,
+    )
+    if (branches.length === 0) continue
+
+    // Trims are capped well short of half a segment so a run touched at both ends survives.
+    const room = (segment: Segment) => dist3(segment.a, segment.b) * 0.3
+    const leg = Math.min(
+      legFor(Math.max(outgoing.size, ...branches.map((b) => b.segment.size))),
+      room(outgoing),
+      ...branches.map((b) => room(b.segment)),
+    )
+    if (leg < 20) continue
+
+    // The junction slides downstream, and the outgoing run starts from there instead.
+    const junction = along(point, downstream, leg)
+    moved.set(outgoing.id, { ...moved.get(outgoing.id), a: junction })
+
+    if (turnOf(through.direction) <= THROUGH_TOLERANCE) {
+      // The main run is already heading this way, so it simply grows to meet the junction.
+      moved.set(through.segment.id, { ...moved.get(through.segment.id), b: junction })
+    } else {
+      // The main run turns here as well as collecting a branch — a drop reaching the floor
+      // and picking up a basin on its way out, say. It keeps its corner, and a short piece
+      // carries it down to the new junction; the corner pass then sweeps that turn. Only the
+      // through flow is in this piece, because the branch does not join until the junction.
+      inserted.push({
+        ...through.segment,
+        id: nextId(),
+        a: point,
+        b: junction,
+        length: dist3(point, junction),
+        role: 'branch',
+      })
+    }
+
+    for (const branch of branches) {
+      const stop = along(point, branch.direction, -leg)
+      moved.set(branch.segment.id, { ...moved.get(branch.segment.id), b: stop })
+      inserted.push({
+        ...branch.segment,
+        id: nextId(),
+        a: stop,
+        b: junction,
+        length: dist3(stop, junction),
+        role: 'bend',
+      })
+    }
+  }
+
+  if (moved.size === 0) return segments
+  return [
+    ...segments.map((segment) => {
+      const change = moved.get(segment.id)
+      if (!change) return segment
+      const a = change.a ?? segment.a
+      const b = change.b ?? segment.b
+      return { ...segment, a, b, length: dist3(a, b) }
+    }),
+    ...inserted,
+  ]
+}
+
+/**
  * Replace square corners with a pair of 45° bends.
  *
  * `nextId` is used for the inserted pieces so the result stays deterministic.
@@ -82,6 +218,12 @@ export function sweepCorners(segments: Segment[], nextId: () => string): Segment
     if (touching.length !== 2) continue
     const [first, second] = touching
     if (first.role === 'bend' || second.role === 'bend') continue
+
+    // One run in, one run out. Two runs *arriving* is not a corner but a confluence — the
+    // outfall, where the drainage leaves the building — and chamfering it would splice the
+    // two together and leave the outlet itself connected to nothing.
+    const arriving = touching.filter((s) => pointKey(s.b) === key).length
+    if (arriving !== 1) continue
 
     // Directions leading away from the corner, along each leg.
     const firstFar = pointKey(first.a) === key ? first.b : first.a
@@ -113,8 +255,12 @@ export function sweepCorners(segments: Segment[], nextId: () => string): Segment
 
     const p1 = along(point, d1, leg)
     const p2 = along(point, d2, leg)
-    // Oriented so it runs downhill, matching the child -> parent convention elsewhere.
-    const [from, to] = p1.z >= p2.z ? [p1, p2] : [p2, p1]
+
+    // Orient the new piece along the flow, a -> b, like every other segment. Which leg the
+    // water arrives on says this exactly; inferring it from the fall does not, because a
+    // level-ish corner drops a millimetre or two across the chamfer and the comparison is
+    // then decided by rounding — which quietly produces a piece pointing back upstream.
+    const [from, to] = pointKey(first.b) === key ? [p1, p2] : [p2, p1]
     inserted.push({
       id: nextId(),
       system: first.system,

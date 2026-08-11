@@ -93,6 +93,18 @@ diagonal run is 7.3 m with 2 bends against 10.1 m with 4.
 Only drainage is affected. Supply and cabling stay rectilinear, which is what they are in a
 real building.
 
+**Branches join in the direction of flow.** A square tee on a drain is wrong for the same
+reason a square elbow is: the incoming flow hits the far wall of the main run, throws the
+stream back on itself and drops its solids at the junction. Every branch therefore enters
+through a 45° oblique tee, angled downstream.
+
+The geometry is forced once you insist on that. A branch cannot enter the *same* point at
+45°, so the junction slides a little way downstream along the main run while the branch stops
+the same distance short, and the diagonal between them lands at 45° to both — a 45° bend
+followed by a 45° tee, which is the detail on the drawing. Where the main run turns *and*
+collects a branch at once, it keeps its corner and a short piece carries it down to the new
+junction, so the corner is swept and the branch still enters obliquely.
+
 **Turns sharper than 45° are built from two 45° bends.** A 90° elbow in a soil pipe stalls
 solids in its sharp inside and cannot be rodded through, so the schedules pair two 45s with a
 short leg between them. That is a fact about the pipe, not a drawing convention — the run
@@ -210,9 +222,13 @@ For mounting: choosing a wall moves the connection onto *that* wall and no other
 choice beats whichever wall happens to be nearest; and a wall-hung fixture set free-standing
 stops using the wall.
 
-For corners and strategies: no turn sharper than 45° survives anywhere in the drainage; each
-swept corner yields exactly two elbows; a joint in a graded straight run is not mistaken for
-a fitting; bends are billed as bends and their bodies are not billed a second time as pipe;
+For corners, junctions and strategies: no turn sharper than 45° survives anywhere in the
+drainage; every branch joins the run it feeds at 45° in the direction of flow; the schedule
+orders oblique tees and never square ones; **every run still drains to the outlet**, checked
+by flooding the network outwards from the outlet rather than by counting loose ends — splice
+two runs together and drop the outlet and the counts still balance while the drainage goes
+nowhere; every 45° leg has a real fitting at both ends; a joint in a graded straight run is
+not mistaken for a fitting; bends are billed as bends and their bodies are not billed a second time as pipe;
 the rectilinear strategy keeps every run on an axis; the any-bearing one produces runs at
 angles that are neither axis-aligned nor 45°; going diagonally is shorter where it should be
 and is declined where it would not pay; and switching strategy leaves supply and cabling

@@ -287,6 +287,9 @@ describe('swept corners', () => {
     let corners = 0
     for (const { point, segs } of junctions.values()) {
       if (segs.length !== 2) continue
+      // One in, one out. Two runs arriving is the outfall, not a corner.
+      const at = key(point)
+      if (segs.filter((s) => key(s.b) === at).length !== 1) continue
       const turn = turnAt(segs[0], segs[1], point)
       if (turn < 1) continue
       corners += 1
@@ -303,8 +306,22 @@ describe('swept corners', () => {
     expect(bends.length).toBeGreaterThan(0)
 
     const elbows = waste.fittings.filter((f) => f.kind === 'elbow')
-    // Each swept corner contributes exactly two elbows, one at each end of its leg.
-    expect(elbows.length).toBeGreaterThanOrEqual(bends.length * 2)
+    expect(elbows.length).toBeGreaterThan(0)
+
+    // Every 45° leg is a real fitting at both ends — an elbow where it turns off a run, or a
+    // tee where it meets one. A plain coupling at either end would mean the leg does not
+    // actually turn anything and should not be there.
+    const key = (p: { x: number; y: number; z: number }) =>
+      `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+    const fittingAt = new Map(waste.fittings.map((f) => [key(f.position), f]))
+    for (const bend of bends) {
+      for (const end of [bend.a, bend.b]) {
+        const fitting = fittingAt.get(key(end))
+        expect(fitting).toBeDefined()
+        expect(['elbow', 'tee']).toContain(fitting!.kind)
+      }
+    }
+
     for (const elbow of elbows) {
       // Exactly 45 — the fitting you can order, not the raw angle, which the fall tilts by
       // about a degree.
@@ -346,22 +363,112 @@ describe('swept corners', () => {
     expect(pipeMetres * 1000).toBeLessThan(waste.totalLength - bendMetres + 1)
   })
 
-  test('sweeping keeps the network connected and still flowing downhill', () => {
+  /**
+   * Everything drains to the outlet — the invariant the whole system exists to satisfy.
+   *
+   * Checked by flooding the pipe network outwards from the outlet itself. Counting loose ends
+   * is not enough: splice two runs together and drop the outlet and the counts still balance,
+   * while the drainage now goes nowhere.
+   */
+  const assertDrainsToOutlet = (project: Project) => {
+    const outlet = project.servicePoints.find((s) => s.kind === 'wasteOutlet')!
+    const waste = solve(project).networks.find((n) => n.system === 'waste')!
+    const key = (p: { x: number; y: number; z: number }) =>
+      `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+    const outletKey = key({ x: outlet.position.x, y: outlet.position.y, z: outlet.z })
+
+    const touching = new Map<string, Segment[]>()
+    for (const segment of waste.segments) {
+      for (const end of [segment.a, segment.b]) {
+        const list = touching.get(key(end))
+        if (list) list.push(segment)
+        else touching.set(key(end), [segment])
+      }
+    }
+    expect(touching.has(outletKey)).toBe(true)
+
+    const reached = new Set<string>()
+    const queue = [outletKey]
+    while (queue.length > 0) {
+      const at = queue.pop() as string
+      for (const segment of touching.get(at) ?? []) {
+        if (reached.has(segment.id)) continue
+        reached.add(segment.id)
+        queue.push(key(segment.a), key(segment.b))
+      }
+    }
+    expect(reached.size).toBe(waste.segments.length)
+  }
+
+  test('every run still drains to the outlet after sweeping', () => {
+    for (const strategy of ['rectilinear', 'diagonal'] as const) {
+      for (const entry of ['bottom', 'back'] as const) {
+        const project = sampleProject()
+        project.settings.drainage.strategy = strategy
+        project.settings.connectionEntry = entry
+        assertDrainsToOutlet(project)
+      }
+    }
+  })
+
+  test('sweeping leaves every run downhill and none of zero length', () => {
     const waste = solve(sampleProject()).networks.find((n) => n.system === 'waste')!
     for (const segment of waste.segments) {
       expect(segment.a.z).toBeGreaterThanOrEqual(segment.b.z - 1e-6)
       expect(segment.length).toBeGreaterThan(0)
     }
-    // Nothing orphaned: every endpoint is shared with at least one other run.
+  })
+
+  test('a branch joins the run it feeds at 45°, in the direction of flow', () => {
     const key = (p: { x: number; y: number; z: number }) =>
       `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
-    const seen = new Map<string, number>()
-    for (const s of waste.segments) {
-      for (const end of [s.a, s.b]) seen.set(key(end), (seen.get(key(end)) ?? 0) + 1)
+    const unit = (a: Segment['a'], b: Segment['a']) => {
+      const length = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) || 1
+      return { x: (b.x - a.x) / length, y: (b.y - a.y) / length, z: (b.z - a.z) / length }
     }
-    const loose = [...seen.values()].filter((n) => n === 1).length
-    // Loose ends are the fixtures plus the outlet, nothing more.
-    expect(loose).toBeLessThanOrEqual(waste.segments.filter((s) => s.role === 'drop').length + 1)
+    const between = (a: ReturnType<typeof unit>, b: typeof a) =>
+      (Math.acos(Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y + a.z * b.z))) * 180) / Math.PI
+
+    for (const strategy of ['rectilinear', 'diagonal'] as const) {
+      const project = sampleProject()
+      project.settings.drainage.strategy = strategy
+      const waste = solve(project).networks.find((n) => n.system === 'waste')!
+
+      const touching = new Map<string, Segment[]>()
+      for (const segment of waste.segments) {
+        for (const end of [segment.a, segment.b]) {
+          const list = touching.get(key(end))
+          if (list) list.push(segment)
+          else touching.set(key(end), [segment])
+        }
+      }
+
+      let branchesChecked = 0
+      for (const [at, segments] of touching) {
+        if (segments.length < 3) continue
+        const leaving = segments.filter((s) => key(s.a) === at)
+        const arriving = segments.filter((s) => key(s.b) === at)
+        if (leaving.length !== 1) continue
+
+        const downstream = unit(leaving[0].a, leaving[0].b)
+        const turns = arriving
+          .map((s) => between(unit(s.a, s.b), downstream))
+          .sort((l, r) => l - r)
+        // One run carries straight on; everything joining it must come in obliquely, or the
+        // flow hits the far wall of the main run and drops its solids at the junction.
+        for (const turn of turns.slice(1)) {
+          expect(turn).toBeLessThanOrEqual(46)
+          branchesChecked += 1
+        }
+      }
+      expect(branchesChecked).toBeGreaterThan(0)
+    }
+  })
+
+  test('drainage orders oblique tees, never square ones', () => {
+    const drainLines = solve(sampleProject()).bom.filter((line) => line.system === 'waste')
+    expect(drainLines.some((line) => /^Oblique tee 45°/.test(line.item))).toBe(true)
+    expect(drainLines.some((line) => /^Square tee/.test(line.item))).toBe(false)
   })
 })
 

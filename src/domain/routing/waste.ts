@@ -41,7 +41,7 @@ import {
   stackDiameter,
 } from '../standards/en12056.ts'
 import type { Level, Network, Project, RoutingWarning, Segment } from '../types.ts'
-import { sweepCorners } from './bends.ts'
+import { sweepCorners, sweepJunctions } from './bends.ts'
 import { deriveFittings, mergeCollinear } from './fittings.ts'
 import { RouteGraph } from './graph.ts'
 import {
@@ -453,9 +453,11 @@ export function routeWaste(
     }
   }
 
-  // Merge first so the corners are real corners, then sweep them, then read the fittings off
-  // the finished geometry — that way the elbows counted are the elbows drawn.
-  const swept = sweepCorners(mergeCollinear(segments), nextId)
+  // Merge first so the corners are real corners. Branch connections are swung downstream
+  // before the corners are swept, because sliding a junction along the trunk changes what the
+  // corners either side of it look like. Fittings are read off the finished geometry, so the
+  // bends counted are the bends drawn.
+  const swept = sweepCorners(sweepJunctions(mergeCollinear(segments), nextId), nextId)
   const fittings = deriveFittings(swept, 'waste', nextId)
 
   return {

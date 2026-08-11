@@ -159,9 +159,29 @@ export function deriveFittings(
   for (const { point, segments: touching } of junctions) {
     const maxSize = Math.max(...touching.map((s) => s.size))
     const minSize = Math.min(...touching.map((s) => s.size))
+    const key = pointKey(point)
+    const arriving = touching.filter((s) => pointKey(s.b) === key)
 
-    if (touching.length >= 3) {
-      fittings.push({ id: nextId(), kind: 'tee', system, position: point, size: maxSize })
+    // Three or more runs, or two runs both flowing in — the second is the outfall, where two
+    // pipes meet and the drainage leaves the building. Both are junctions, not bends.
+    if (touching.length >= 3 || arriving.length >= 2) {
+      // The angle a branch makes with the outgoing run is what distinguishes an oblique tee
+      // from a square one, and on a drain that is the difference between a junction that
+      // clears and one that blocks.
+      const leaving = touching.find((s) => pointKey(s.a) === key)
+      const entry = leaving
+        ? arriving
+            .map((s) => angleBetween(unitFrom(s.a, point), unitFrom(point, leaving.b)))
+            .filter((angle) => angle > 1)
+        : []
+      fittings.push({
+        id: nextId(),
+        kind: 'tee',
+        system,
+        position: point,
+        size: maxSize,
+        angle: entry.length > 0 ? catalogueAngle(Math.max(...entry), system) : undefined,
+      })
       continue
     }
     if (touching.length === 2) {
@@ -248,10 +268,13 @@ export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
       // Cables have no fittings worth ordering — the run is continuous to the outlet.
       if (network.system === 'power') continue
       const suffix = fitting.size > 0 ? ` DN${fitting.size}` : ''
-      // An elbow is bought by its angle: a 45° and a 90° are different parts.
+      // Bends and tees are bought by their angle: a 45° and a 90° are different parts, and on
+      // a drain an oblique tee and a square one are not interchangeable at all.
       const label =
-        fitting.kind === 'elbow' && fitting.angle
-          ? `Bend ${fitting.angle}°`
+        fitting.angle && (fitting.kind === 'elbow' || fitting.kind === 'tee')
+          ? fitting.kind === 'elbow'
+            ? `Bend ${fitting.angle}°`
+            : `${fitting.angle <= 46 ? 'Oblique' : 'Square'} tee ${fitting.angle}°`
           : FITTING_LABEL[fitting.kind]
       bump({ system: network.system, item: `${label}${suffix}`, unit: 'pc' }, 1)
     }
