@@ -1,0 +1,188 @@
+/**
+ * Turning a routed tree into something you could order from a merchant: merge the raw
+ * per-edge segments into straight runs, infer the fittings at every junction and change of
+ * direction, and total it all up.
+ */
+
+import { dist3, type Vec3 } from '../geometry/vec.ts'
+import type { BomLine, Circuit, Fitting, Network, Segment, SystemKind } from '../types.ts'
+import { directionIndex } from './graph.ts'
+
+const pointKey = (p: Vec3): string => `${Math.round(p.x)},${Math.round(p.y)},${Math.round(p.z)}`
+
+/**
+ * Collapse chains of collinear segments that carry the same load and size.
+ *
+ * The router emits one segment per grid edge, so a 4 m straight run arrives as a dozen
+ * pieces. Merging matters for more than tidiness: the fitting pass counts a bend at every
+ * junction of two segments, and un-merged collinear pieces would invent elbows that aren't
+ * there.
+ */
+export function mergeCollinear(segments: Segment[]): Segment[] {
+  const incident = new Map<string, Segment[]>()
+  for (const segment of segments) {
+    for (const end of [segment.a, segment.b]) {
+      const key = pointKey(end)
+      const list = incident.get(key)
+      if (list) list.push(segment)
+      else incident.set(key, [segment])
+    }
+  }
+
+  const consumed = new Set<string>()
+  const output: Segment[] = []
+
+  const sameRun = (x: Segment, y: Segment): boolean =>
+    x.size === y.size &&
+    Math.abs(x.load - y.load) < 1e-9 &&
+    x.circuitId === y.circuitId &&
+    // A stack and the drop that feeds it are both vertical but are different components,
+    // and merging them would hide the storey crossing from the schedule.
+    x.role === y.role &&
+    (directionIndex(x.a, x.b) >> 1) === (directionIndex(y.a, y.b) >> 1)
+
+  /** Walk from `end` while the chain stays straight and undivided. */
+  const extend = (start: Segment, fromEnd: 'a' | 'b'): Vec3 => {
+    let current = start
+    let tip = fromEnd === 'a' ? start.a : start.b
+    for (;;) {
+      const neighbours = (incident.get(pointKey(tip)) ?? []).filter((s) => s.id !== current.id)
+      if (neighbours.length !== 1) return tip
+      const next = neighbours[0]
+      if (consumed.has(next.id) || !sameRun(current, next)) return tip
+      consumed.add(next.id)
+      tip = pointKey(next.a) === pointKey(tip) ? next.b : next.a
+      current = next
+    }
+  }
+
+  for (const segment of segments) {
+    if (consumed.has(segment.id)) continue
+    consumed.add(segment.id)
+    const a = extend(segment, 'a')
+    const b = extend(segment, 'b')
+    const length = dist3(a, b)
+    output.push({ ...segment, a, b, length })
+  }
+
+  return output
+}
+
+/**
+ * Infer fittings from the merged geometry: a tee where three or more runs meet, an elbow
+ * where two runs turn, a reducer where the size steps, and a terminal at every loose end.
+ */
+export function deriveFittings(
+  segments: Segment[],
+  system: SystemKind,
+  nextId: () => string,
+): Fitting[] {
+  const incident = new Map<string, { point: Vec3; segments: Segment[] }>()
+  for (const segment of segments) {
+    for (const end of [segment.a, segment.b]) {
+      const key = pointKey(end)
+      const entry = incident.get(key)
+      if (entry) entry.segments.push(segment)
+      else incident.set(key, { point: end, segments: [segment] })
+    }
+  }
+
+  const fittings: Fitting[] = []
+  // Sorting by position keeps the output stable regardless of Map insertion order.
+  const junctions = [...incident.values()].sort((l, r) => pointKey(l.point).localeCompare(pointKey(r.point)))
+
+  for (const { point, segments: touching } of junctions) {
+    const maxSize = Math.max(...touching.map((s) => s.size))
+    const minSize = Math.min(...touching.map((s) => s.size))
+
+    if (touching.length >= 3) {
+      fittings.push({ id: nextId(), kind: 'tee', system, position: point, size: maxSize })
+      continue
+    }
+    if (touching.length === 2) {
+      const [first, second] = touching
+      const axisA = directionIndex(first.a, first.b) >> 1
+      const axisB = directionIndex(second.a, second.b) >> 1
+      if (axisA !== axisB) {
+        fittings.push({ id: nextId(), kind: 'elbow', system, position: point, size: maxSize, angle: 90 })
+      } else if (maxSize !== minSize) {
+        fittings.push({ id: nextId(), kind: 'reducer', system, position: point, size: maxSize })
+      } else {
+        fittings.push({ id: nextId(), kind: 'coupling', system, position: point, size: maxSize })
+      }
+      continue
+    }
+    fittings.push({ id: nextId(), kind: 'terminal', system, position: point, size: maxSize })
+  }
+
+  return fittings
+}
+
+const PIPE_LABEL: Record<SystemKind, string> = {
+  cold: 'Cold water pipe',
+  hot: 'Hot water pipe',
+  waste: 'Waste pipe',
+  power: 'Cable',
+}
+
+/** A run that crosses a storey is a different item on the order, and priced differently. */
+const STACK_LABEL: Record<SystemKind, string> = {
+  cold: 'Cold water rising main',
+  hot: 'Hot water rising main',
+  waste: 'Soil stack',
+  power: 'Cable riser',
+}
+
+const FITTING_LABEL: Record<Fitting['kind'], string> = {
+  elbow: 'Elbow 90°',
+  tee: 'Tee',
+  reducer: 'Reducer',
+  coupling: 'Coupling',
+  trap: 'Trap',
+  stack: 'Stack connector',
+  terminal: 'Terminal connection',
+}
+
+/** Roll the networks up into an orderable list. */
+export function buildBom(networks: Network[], circuits: Circuit[]): BomLine[] {
+  const lines = new Map<string, BomLine>()
+
+  const bump = (line: Omit<BomLine, 'quantity'>, quantity: number) => {
+    const key = `${line.system}|${line.item}|${line.unit}`
+    const existing = lines.get(key)
+    if (existing) existing.quantity += quantity
+    else lines.set(key, { ...line, quantity })
+  }
+
+  for (const network of networks) {
+    for (const segment of network.segments) {
+      const noun = segment.role === 'stack' ? STACK_LABEL : PIPE_LABEL
+      const item =
+        network.system === 'power'
+          ? // Line, neutral and protective earth — three cores on every domestic circuit.
+            `${noun.power} 3 × ${segment.size} mm²`
+          : `${noun[network.system]} DN${segment.size}`
+      bump({ system: network.system, item, unit: 'm' }, segment.length / 1000)
+    }
+    for (const fitting of network.fittings) {
+      // Cables have no fittings worth ordering — the run is continuous to the outlet.
+      if (network.system === 'power') continue
+      const suffix = fitting.size > 0 ? ` DN${fitting.size}` : ''
+      bump(
+        { system: network.system, item: `${FITTING_LABEL[fitting.kind]}${suffix}`, unit: 'pc' },
+        1,
+      )
+    }
+  }
+
+  for (const circuit of circuits) {
+    bump(
+      { system: 'power', item: `MCB ${circuit.breakerAmps} A — ${circuit.name}`, unit: 'pc' },
+      1,
+    )
+  }
+
+  return [...lines.values()]
+    .map((line) => ({ ...line, quantity: Math.round(line.quantity * 100) / 100 }))
+    .sort((a, b) => a.system.localeCompare(b.system) || a.item.localeCompare(b.item))
+}

@@ -1,0 +1,75 @@
+@import 'tailwindcss';
+
+/*
+ * A single dark theme. A drawing tool is looked at for hours and the plan itself carries all
+ * the colour that matters — the four system colours have to stay unambiguous against the
+ * background, which a light surface makes harder.
+ */
+@theme {
+  --color-ink-950: #0a0e14;
+  --color-ink-900: #11161f;
+  --color-ink-850: #161c27;
+  --color-ink-800: #1c2330;
+  --color-ink-700: #2a3444;
+  --color-ink-600: #3c4859;
+  --color-ink-400: #7c8798;
+  --color-ink-300: #a8b2c1;
+  --color-ink-100: #e6eaf0;
+
+  --color-accent: #38bdf8;
+
+  --color-cold: #3b82f6;
+  --color-hot: #ef4444;
+  --color-waste: #a1887f;
+  --color-power: #f59e0b;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-950);
+  color: var(--color-ink-100);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Tabular figures everywhere a dimension is shown, so numbers stop jittering as they change. */
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-600);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* The plan is dragged constantly; a stray text selection mid-drag is pure friction. */
+.plan-surface {
+  touch-action: none;
+  user-select: none;
+}

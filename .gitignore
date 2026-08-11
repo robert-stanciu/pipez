@@ -1,0 +1,32 @@
+# Dependencies — restored by `npm ci`, never committed.
+node_modules/
+
+# Build output.
+dist/
+*.tsbuildinfo
+
+# Test and tooling output.
+coverage/
+.vite/
+.eslintcache
+
+# Editors.
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS.
+.DS_Store
+Thumbs.db
+
+# Logs.
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Local environment — never commit secrets.
+.env
+.env.*
+!.env.example
+*.local
