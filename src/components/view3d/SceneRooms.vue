@@ -41,6 +41,20 @@ const wallFaded = new MeshStandardMaterial({
   depthWrite: false,
 })
 const floorMaterial = new MeshStandardMaterial({ color: '#232c3a', roughness: 1 })
+/**
+ * The floor goes see-through with the walls.
+ *
+ * Most of what this app routes is *under* a floor — the drainage, the screed distribution and
+ * the whole of the heating — so an opaque slab hides exactly the runs there is no other way
+ * to look at. It is the same argument as the walls, and the same switch.
+ */
+const floorXray = new MeshStandardMaterial({
+  color: '#232c3a',
+  roughness: 1,
+  transparent: true,
+  opacity: 0.35,
+  depthWrite: false,
+})
 
 const visibleRooms = computed(() =>
   view.isolateLevel
@@ -73,7 +87,7 @@ const materialFor = (room: { id: string; levelId: string }) => {
     <template v-for="entry in rooms" :key="entry.room.id">
       <TresMesh
         :geometry="unitBox"
-        :material="floorMaterial"
+        :material="view.xray ? floorXray : floorMaterial"
         :position="entry.floor.position"
         :scale="entry.floor.scale"
         @click="selection.select({ kind: 'room', id: entry.room.id })"

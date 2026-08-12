@@ -31,6 +31,7 @@ const portMaterials: Record<SystemKind, MeshStandardMaterial> = {
   hot: new MeshStandardMaterial({ color: SYSTEM_COLOR.hot }),
   waste: new MeshStandardMaterial({ color: SYSTEM_COLOR.waste }),
   power: new MeshStandardMaterial({ color: SYSTEM_COLOR.power }),
+  heating: new MeshStandardMaterial({ color: SYSTEM_COLOR.heating }),
 }
 
 const visibleFixtures = computed(() => {

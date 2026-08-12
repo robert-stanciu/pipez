@@ -41,6 +41,7 @@ const items = computed<ShoppingItem[]>(() =>
 const TRADE_COLOR: Record<Trade, string> = {
   drainage: SYSTEM_COLOR.waste,
   water: SYSTEM_COLOR.cold,
+  heating: SYSTEM_COLOR.heating,
   electrical: SYSTEM_COLOR.power,
 }
 

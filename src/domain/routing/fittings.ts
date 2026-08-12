@@ -50,6 +50,9 @@ const CATALOGUE_ANGLES: Record<SystemKind, number[]> = {
   cold: [45, 90],
   hot: [45, 90],
   power: [45, 90],
+  // A heating coil has no fittings — it is one continuous bent pipe — so nothing here is ever
+  // consulted. The primary between the source and a manifold is ordinary pressure pipe.
+  heating: [45, 90],
 }
 
 /**
@@ -229,6 +232,7 @@ const PIPE_LABEL: Record<SystemKind, string> = {
   hot: 'Hot water pipe',
   waste: 'Waste pipe',
   power: 'Cable',
+  heating: 'Heating pipe',
 }
 
 /** A run that crosses a storey is a different item on the order, and priced differently. */
@@ -237,6 +241,7 @@ const STACK_LABEL: Record<SystemKind, string> = {
   hot: 'Hot water rising main',
   waste: 'Soil stack',
   power: 'Cable riser',
+  heating: 'Heating riser',
 }
 
 /** The stub between the top of a drain and its air admittance valve. */
@@ -245,6 +250,7 @@ const VENT_LABEL: Record<SystemKind, string> = {
   hot: 'Hot water pipe',
   waste: 'Vent pipe',
   power: 'Cable',
+  heating: 'Heating pipe',
 }
 
 const FITTING_LABEL: Record<Fitting['kind'], string> = {
@@ -266,11 +272,20 @@ const FITTING_LABEL: Record<Fitting['kind'], string> = {
  * board's own parts — enclosure, arrester, residual current devices, blanks — are counted in
  * the shopping list, which knows the ratings the devices are actually sold in.
  */
+export interface BomOptions {
+  material?: SupplyMaterial
+  /** How the heating coil is labelled — `Ø16 × 2,0 PE-RT` rather than a bare diameter. */
+  heatingPipe?: string
+  /** Lines a solver worked out for itself, because the geometry alone does not say them. */
+  extra?: BomLine[]
+}
+
 export function buildBom(
   networks: Network[],
   circuits: Circuit[],
-  material: SupplyMaterial = 'copper',
+  options: BomOptions = {},
 ): BomLine[] {
+  const { material = 'copper', heatingPipe, extra = [] } = options
   const lines = new Map<string, BomLine>()
 
   const bump = (line: Omit<BomLine, 'quantity'>, quantity: number) => {
@@ -300,9 +315,16 @@ export function buildBom(
             `${noun.power} ${circuit?.cores ?? 3} × ${segment.size} mm²`
           : network.system === 'waste'
             ? `${noun[network.system]} DN${segment.size}`
-            : // Supply is bought by outside diameter and by material — a Ø20 PP-R and a 15 mm
-              // copper are the same connection, and only one of them is on the shelf here.
-              `${noun[network.system]} ${supplyPipeLabel(material, segment.size)}`
+            : // A heating coil is bought as coil: one product for the loops and their leaders
+              // alike, because they are the same unbroken pipe. The primary between the source
+              // and the manifold is ordinary pressure pipe in the project's own material.
+              network.system === 'heating' &&
+                segment.role !== 'primary' &&
+                segment.role !== 'stack'
+              ? `Underfloor heating pipe ${heatingPipe ?? `Ø${segment.size}`}`
+              : // Supply is bought by outside diameter and by material — a Ø20 PP-R and a 15 mm
+                // copper are the same connection, and only one of them is on the shelf here.
+                `${noun[network.system]} ${supplyPipeLabel(material, segment.size)}`
       bump({ system: network.system, item, unit: 'm' }, segment.length / 1000)
     }
     for (const fitting of network.fittings) {
@@ -339,6 +361,12 @@ export function buildBom(
       },
       1,
     )
+  }
+
+  // Lines a solver supplied itself — an edge strip is as much part of a heated floor as the
+  // pipe is, and no amount of looking at the geometry would find it.
+  for (const line of extra) {
+    if (line.quantity > 0) bump({ system: line.system, item: line.item, unit: line.unit }, line.quantity)
   }
 
   return [...lines.values()]

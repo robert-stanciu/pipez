@@ -40,6 +40,7 @@ interface Run {
   x2: number
   y2: number
   width: number
+  opacity: number
   label: string | null
   midX: number
   midY: number
@@ -50,6 +51,20 @@ const VERTICAL_THRESHOLD = 20
 
 const strokeFor = (segment: Segment): number =>
   segment.system === 'power' ? 26 : Math.max(24, segment.size * 0.9)
+
+/**
+ * What to write along a run.
+ *
+ * A heating coil is hundreds of metres of one pipe in one size, so stamping the diameter on
+ * every leg of it would bury the plan under the same three characters. What is worth naming
+ * is where a loop leaves the manifold, and that is the leader.
+ */
+function labelFor(segment: Segment): string | null {
+  if (segment.role === 'loop') return null
+  if (segment.system === 'power') return `${segment.size} mm²`
+  if (segment.system === 'heating') return `Ø${segment.size}`
+  return `DN${segment.size}`
+}
 
 const visible = computed(() => SYSTEM_KINDS.filter((s) => view.isSystemVisible(s)))
 
@@ -71,11 +86,10 @@ const runs = computed<Run[]>(() =>
           x2: segment.b.x,
           y2: -segment.b.y,
           width: strokeFor(segment),
-          label: showLabel
-            ? system === 'power'
-              ? `${segment.size} mm²`
-              : `DN${segment.size}`
-            : null,
+          // A coil covers the whole floor of a room, so it is drawn back a little: it has to
+          // read as a hatch over the room rather than compete with the pipe crossing it.
+          opacity: segment.role === 'loop' ? 0.7 : 0.9,
+          label: showLabel ? labelFor(segment) : null,
           midX: (segment.a.x + segment.b.x) / 2,
           midY: -(segment.a.y + segment.b.y) / 2,
           angle: labelAngle(dx, dy),
@@ -185,7 +199,7 @@ const verticals = computed(() =>
         :stroke="SYSTEM_COLOR[run.system]"
         :stroke-width="run.width"
         stroke-linecap="round"
-        opacity="0.9"
+        :opacity="run.opacity"
       />
     </g>
 

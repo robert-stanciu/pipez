@@ -104,6 +104,56 @@ export function bomCsv(project: Project, result: RoutingResult): string {
     })
   }
 
+  for (const manifold of result.manifolds) {
+    rows.push([], [`Manifold — ${manifold.name}`])
+    rows.push(
+      ['Flow / return (°C)', `${manifold.flowTempC} / ${manifold.returnTempC}`],
+      ['Loops', `${manifold.loops} of ${manifold.ports} ports`],
+      ['Output (W)', Math.round(manifold.outputW)],
+      ['Flow rate (kg/h)', Math.round(manifold.flowKgH)],
+      ['Pump head (kPa)', manifold.pumpHeadKpa.toFixed(1)],
+      [
+        'Primary',
+        `Ø${manifold.primarySize} over ${(manifold.primaryLength / 1000).toFixed(1)} m`,
+      ],
+    )
+
+    // The loop schedule proper: this is the sheet the flow meters are set from, so the
+    // columns are the ones a commissioning engineer reads across.
+    rows.push([
+      'Port',
+      'Room',
+      'Length (m)',
+      'Area (m²)',
+      'Pitch (mm)',
+      'Covering',
+      'Room (°C)',
+      'Output (W/m²)',
+      'Surface (°C)',
+      'Limit (°C)',
+      'Flow (kg/h)',
+      'Velocity (m/s)',
+      'Δp (kPa)',
+    ])
+    for (const loop of result.loops.filter((l) => l.manifoldId === manifold.id)) {
+      rows.push([
+        loop.port,
+        loop.partOf > 0 ? `${loop.roomName} (${loop.partOf})` : loop.roomName,
+        (loop.length / 1000).toFixed(1),
+        loop.area.toFixed(1),
+        loop.spacing,
+        loop.covering,
+        loop.roomTempC,
+        Math.round(loop.fluxW),
+        loop.surfaceTempC.toFixed(1),
+        loop.surfaceLimitC,
+        Math.round(loop.flowKgH),
+        loop.velocity.toFixed(2),
+        loop.pressureDropKpa.toFixed(1),
+      ])
+    }
+  }
+
   if (result.warnings.length > 0) {
     rows.push([], ['Severity', 'System', 'Message'])
     for (const warning of result.warnings) {

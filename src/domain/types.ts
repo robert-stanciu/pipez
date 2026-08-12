@@ -10,16 +10,17 @@ export type Id = string
 
 /* ------------------------------------------------------------------ services */
 
-/** The four networks the solver produces. */
-export type SystemKind = 'cold' | 'hot' | 'waste' | 'power'
+/** The five networks the solver produces. */
+export type SystemKind = 'cold' | 'hot' | 'waste' | 'power' | 'heating'
 
-export const SYSTEM_KINDS: SystemKind[] = ['cold', 'hot', 'waste', 'power']
+export const SYSTEM_KINDS: SystemKind[] = ['cold', 'hot', 'waste', 'power', 'heating']
 
 export const SYSTEM_LABEL: Record<SystemKind, string> = {
   cold: 'Cold water',
   hot: 'Hot water',
   waste: 'Waste',
   power: 'Electrical',
+  heating: 'Underfloor heating',
 }
 
 /** Shared between the 2D overlay and the 3D meshes so the two views read as one drawing. */
@@ -28,6 +29,7 @@ export const SYSTEM_COLOR: Record<SystemKind, string> = {
   hot: '#ef4444',
   waste: '#8b7355',
   power: '#f59e0b',
+  heating: '#a855f7',
 }
 
 /* -------------------------------------------------------------------- levels */
@@ -61,6 +63,34 @@ export interface Wall {
   loadBearing: boolean
 }
 
+/**
+ * What the floor of a room is finished in.
+ *
+ * The only property that matters here is its thermal resistance, and it is the single biggest
+ * lever on an underfloor heating design: the same pipe at the same water temperature under
+ * carpet gives less than half what it gives under tile. EN 1264-2 draws its characteristic
+ * curves against R_λB = 0,10 m²K/W, which is roughly an engineered wood floor.
+ */
+export type FloorCovering = 'tile' | 'stone' | 'laminate' | 'wood' | 'carpet'
+
+/**
+ * Underfloor heating in one room.
+ *
+ * Everything is nullable and falls back to the project: a house is laid at one pitch, off one
+ * flow temperature, in one covering, and only the rooms that differ — the bathroom that is
+ * warmer and tiled, the utility room that is not heated at all — need saying.
+ */
+export interface RoomHeating {
+  enabled: boolean
+  /** Pipe pitch, mm. */
+  spacing: number | null
+  /** Design air temperature, °C. */
+  roomTempC: number | null
+  covering: FloorCovering | null
+  /** Manifold that serves it; null picks the nearest one on the same storey. */
+  manifoldId: Id | null
+}
+
 export interface Room {
   id: Id
   name: string
@@ -81,6 +111,11 @@ export interface Room {
   wallThickness: number
   /** Index-aligned with the outline edges; regenerated when the vertex count changes. */
   walls: Wall[]
+  /**
+   * Underfloor heating. Added after the first release, so a file written before it simply
+   * gets the project defaults — which is what an unannotated room means anyway.
+   */
+  heating?: RoomHeating
 }
 
 export type OpeningKind = 'door' | 'passage' | 'window'
@@ -194,12 +229,17 @@ export interface Fixture {
 
 /* ------------------------------------------------------------- service points */
 
-export type ServiceKind = 'waterEntry' | 'wasteOutlet' | 'electricalPanel'
+export type ServiceKind =
+  | 'waterEntry'
+  | 'wasteOutlet'
+  | 'electricalPanel'
+  | 'heatingManifold'
 
 export const SERVICE_LABEL: Record<ServiceKind, string> = {
   waterEntry: 'Water entry',
   wasteOutlet: 'Waste outlet',
   electricalPanel: 'Consumer unit',
+  heatingManifold: 'Heating manifold',
 }
 
 export interface ServicePoint {
@@ -278,6 +318,44 @@ export interface SupplySettings {
   entryPressureKpa: number
 }
 
+/**
+ * The pipe a loop is coiled from.
+ *
+ * Underfloor heating pipe is sold by outside diameter and wall, in coils rather than bars,
+ * and the diameter is the thing that decides how long a loop may be: the pipe has to carry
+ * its own heat *and* come back to the manifold on a domestic pump's head.
+ */
+export type UfhPipeId = 'pert16' | 'pert17' | 'pert20' | 'multi16'
+
+/**
+ * How the coil is set out in a room.
+ *
+ * `serpentine` walks the room in parallel runs and comes back round the perimeter, which is
+ * the only pattern that can be set out reliably in a room of any shape.
+ *
+ * `perimeter` is the same thing without the interior field — a single run round the room —
+ * for a space too small or too obstructed to meander in.
+ */
+export type LoopPattern = 'serpentine' | 'perimeter'
+
+export interface HeatingSettings {
+  pipe: UfhPipeId
+  /** Pipe pitch, mm. */
+  spacing: number
+  /** Flow temperature at the manifold, °C. */
+  flowTempC: number
+  /** Design drop across a loop, K. Flow minus return. */
+  deltaTK: number
+  /** Design air temperature for a room that does not say otherwise, °C. */
+  roomTempC: number
+  covering: FloorCovering
+  pattern: LoopPattern
+  /** Screed over the crown of the pipe, mm. EN 1264-4 wants at least 45. */
+  screedCover: number
+  /** Thermal resistance of the insulation under the pipe, m²K/W. */
+  insulationR: number
+}
+
 export interface ProjectSettings {
   /** Defaults applied to newly created rooms and walls. */
   wallThickness: number
@@ -296,6 +374,7 @@ export interface ProjectSettings {
   standards: 'EN'
   drainage: DrainageSettings
   supply: SupplySettings
+  heating: HeatingSettings
 }
 
 export interface Project {
@@ -338,6 +417,14 @@ export type FittingKind =
  * branch but it lives at appliance height by definition, so the checks that keep buried
  * drainage under the floor do not apply to it.
  */
+/**
+ * `loop` is the heating coil itself — the pipe inside the room, laid in the screed. It is not
+ * a branch of anything: it leaves the manifold, covers the floor and comes back, with no
+ * joint anywhere along it, which is why it is never given fittings.
+ *
+ * `primary` is the flow-and-return pair between the heat source and a manifold, which is
+ * ordinary pipe in an ordinary size and has nothing to do with the coil.
+ */
 export type SegmentRole =
   | 'branch'
   | 'tail'
@@ -346,6 +433,8 @@ export type SegmentRole =
   | 'bend'
   | 'vent'
   | 'collector'
+  | 'loop'
+  | 'primary'
 
 export interface Segment {
   id: Id
@@ -612,11 +701,83 @@ export interface PanelDesign {
   maximumDemand: number
 }
 
+/* ------------------------------------------------------------------ heating */
+
+/**
+ * One heating loop, as it would appear on the manifold schedule.
+ *
+ * A loop is a single unbroken length of pipe: out of the manifold, across the floor of one
+ * room (or one part of one room), and back. Everything below is measured on that whole
+ * length, leaders included, because that is what has to be cut off the coil and that is what
+ * the pump has to push water through.
+ */
+export interface HeatingLoop {
+  id: Id
+  /** Manifold this loop is ported on, and its port number there, counting from 1. */
+  manifoldId: Id
+  port: number
+  roomId: Id
+  roomName: string
+  levelId: Id
+  /** Distinguishes the loops of a room that needed more than one. */
+  partOf: number
+  /** Total pipe, mm — the coil plus both leaders. */
+  length: number
+  /** Floor area this loop covers, m². */
+  area: number
+  spacing: number
+  covering: FloorCovering
+  /** Design air temperature of the room it heats, °C. */
+  roomTempC: number
+  /** Upward output, W/m², and the whole loop's share of it. */
+  fluxW: number
+  outputW: number
+  /** Downward loss through the insulation, W/m². */
+  downwardW: number
+  /** Mean floor surface temperature, °C, and the limit it is held against. */
+  surfaceTempC: number
+  surfaceLimitC: number
+  /** Water side: mass flow (kg/h), velocity (m/s) and the pressure it costs (kPa). */
+  flowKgH: number
+  velocity: number
+  pressureDropKpa: number
+}
+
+/**
+ * A manifold as it would be ordered and commissioned: how many ports, what flows through
+ * them, and what the pump at its foot has to be able to do.
+ */
+export interface ManifoldDesign {
+  /** The service point this manifold is. */
+  id: Id
+  name: string
+  levelId: Id
+  /** Ports actually used, and the size of manifold that holds them. */
+  loops: number
+  ports: number
+  flowTempC: number
+  returnTempC: number
+  /** Total output and total flow through the manifold. */
+  outputW: number
+  flowKgH: number
+  /** Worst loop's resistance plus the manifold's own, kPa — what the pump has to deliver. */
+  pumpHeadKpa: number
+  /** Shortest and longest loop on the manifold, mm; the spread is what the valves balance. */
+  shortestLoop: number
+  longestLoop: number
+  /** Size of the primary flow and return reaching it, mm, and how far away the source is. */
+  primarySize: number
+  primaryLength: number
+}
+
 export interface RoutingResult {
   networks: Network[]
   circuits: Circuit[]
   /** One design per consumer unit; empty until there is a board with something in it. */
   panels: PanelDesign[]
+  /** One per heating manifold, and every loop ported on one. */
+  manifolds: ManifoldDesign[]
+  loops: HeatingLoop[]
   warnings: RoutingWarning[]
   bom: BomLine[]
   stats: {
@@ -630,6 +791,8 @@ export const EMPTY_RESULT: RoutingResult = {
   networks: [],
   circuits: [],
   panels: [],
+  manifolds: [],
+  loops: [],
   warnings: [],
   bom: [],
   stats: { solveMs: 0, graphNodes: 0, graphEdges: 0 },

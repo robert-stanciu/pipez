@@ -3,6 +3,14 @@
 import { computed } from 'vue'
 
 import {
+  COVERING_LABEL,
+  insulationThickness,
+  maxFlux,
+  MIN_SCREED_COVER,
+  SPACINGS,
+  UFH_PIPES,
+} from '../../domain/standards/en1264.ts'
+import {
   SYSTEM_COLOR,
   SYSTEM_KINDS,
   SYSTEM_LABEL,
@@ -10,12 +18,14 @@ import {
   type CableRoute,
   type ConnectionEntry,
   type DrainageStrategy,
+  type FloorCovering,
   type SupplyMaterial,
   type SupplyRoute,
   type EarthingSystem,
   type InstallationMethod,
   type SurgeProtection,
   type SupplySystem,
+  type UfhPipeId,
 } from '../../domain/types.ts'
 import { useProjectStore } from '../../stores/project.ts'
 import { useRoutingStore } from '../../stores/routing.ts'
@@ -55,6 +65,16 @@ const totals = computed(() =>
 function focusWarning(fixtureId?: string): void {
   if (fixtureId) selection.select({ kind: 'fixture', id: fixtureId })
 }
+
+const storeyName = (levelId: string): string =>
+  projectStore.project.levels.find((level) => level.id === levelId)?.name ?? 'unplaced'
+
+const loopsOf = (manifoldId: string) =>
+  routing.result.loops.filter((loop) => loop.manifoldId === manifoldId)
+
+const heating = computed(() => projectStore.project.settings.heating)
+
+const UFH_PIPE_LIST = Object.values(UFH_PIPES)
 </script>
 
 <template>
@@ -97,7 +117,7 @@ function focusWarning(fixtureId?: string): void {
           <input v-model="view.showFixtures" type="checkbox" class="size-4 accent-[var(--color-accent)]" />
         </label>
         <label class="flex items-center justify-between py-0.5">
-          <span class="text-ink-400">See-through walls (3D)</span>
+          <span class="text-ink-400">See-through walls and floors (3D)</span>
           <input v-model="view.xray" type="checkbox" class="size-4 accent-[var(--color-accent)]" />
         </label>
         <label class="flex items-center justify-between py-0.5">
@@ -127,6 +147,68 @@ function focusWarning(fixtureId?: string): void {
           <p class="mt-0.5">{{ warning.message }}</p>
         </li>
       </ul>
+    </PanelSection>
+
+    <!-- One block per manifold: the schedule a fitter balances the valves from. -->
+    <PanelSection
+      v-for="manifold in routing.result.manifolds"
+      :key="manifold.id"
+      :title="`${manifold.name} — ${storeyName(manifold.levelId)}`"
+      :badge="manifold.loops"
+    >
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        {{ manifold.flowTempC }} / {{ manifold.returnTempC }} °C ·
+        {{ Math.round(manifold.outputW) }} W · {{ Math.round(manifold.flowKgH) }} kg/h · pump
+        {{ manifold.pumpHeadKpa.toFixed(0) }} kPa · primary Ø{{ manifold.primarySize }}
+      </p>
+      <table class="w-full text-[11px]">
+        <thead class="text-ink-400">
+          <tr class="border-b border-ink-800">
+            <th class="py-0.5 text-left font-normal">Loop</th>
+            <th class="py-0.5 text-right font-normal">m</th>
+            <th class="py-0.5 text-right font-normal">m²</th>
+            <th class="py-0.5 text-right font-normal">W/m²</th>
+            <th class="py-0.5 text-right font-normal">°C</th>
+            <th class="py-0.5 text-right font-normal">kg/h</th>
+            <th class="py-0.5 text-right font-normal">kPa</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="loop in loopsOf(manifold.id)"
+            :key="loop.id"
+            class="border-b border-ink-850 last:border-0"
+          >
+            <td class="py-0.5 pr-2 text-ink-300">
+              {{ loop.port }}. {{ loop.roomName
+              }}<span v-if="loop.partOf" class="text-ink-400"> ({{ loop.partOf }})</span>
+            </td>
+            <td class="numeric py-0.5 text-right text-ink-100">
+              {{ (loop.length / 1000).toFixed(0) }}
+            </td>
+            <td class="numeric py-0.5 text-right text-ink-400">{{ loop.area.toFixed(1) }}</td>
+            <td class="numeric py-0.5 text-right text-ink-100">{{ Math.round(loop.fluxW) }}</td>
+            <td
+              class="numeric py-0.5 text-right"
+              :class="loop.surfaceTempC > loop.surfaceLimitC ? 'text-amber-300' : 'text-ink-400'"
+            >
+              {{ loop.surfaceTempC.toFixed(1) }}
+            </td>
+            <td class="numeric py-0.5 text-right text-ink-400">{{ Math.round(loop.flowKgH) }}</td>
+            <td
+              class="numeric py-0.5 text-right"
+              :class="loop.pressureDropKpa > 25 ? 'text-amber-300' : 'text-ink-400'"
+            >
+              {{ loop.pressureDropKpa.toFixed(0) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="mt-2 text-[11px] leading-relaxed text-ink-400">
+        Surface temperatures are the mean over the loop, against the EN 1264-2 ceiling of 29 °C
+        in a living space and 33 °C in a bathroom. Lengths include both leaders — they come off
+        the same coil, so they spend the same budget.
+      </p>
     </PanelSection>
 
     <PanelSection v-if="routing.result.circuits.length" title="Circuits" :badge="routing.result.circuits.length">
@@ -309,6 +391,119 @@ function focusWarning(fixtureId?: string): void {
         400 V between lines and {{ projectStore.project.settings.electrical.voltage }} V to
         neutral — the same system older drawings call 380/220 V. Set an appliance to three
         phases in its inspector to spread it across all three.
+      </p>
+    </PanelSection>
+
+    <PanelSection title="Underfloor heating">
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Pipe</span>
+        <select
+          class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="heating.pipe"
+          @change="
+            projectStore.updateSettings({
+              heating: {
+                ...heating,
+                pipe: ($event.target as HTMLSelectElement).value as UfhPipeId,
+              },
+            })
+          "
+        >
+          <option v-for="option in UFH_PIPE_LIST" :key="option.id" :value="option.id">
+            {{ option.label }}
+          </option>
+        </select>
+      </label>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Pipe pitch</span>
+        <select
+          class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="heating.spacing"
+          @change="
+            projectStore.updateSettings({
+              heating: { ...heating, spacing: Number(($event.target as HTMLSelectElement).value) },
+            })
+          "
+        >
+          <option v-for="pitch in SPACINGS" :key="pitch" :value="pitch">{{ pitch }} mm</option>
+        </select>
+      </label>
+      <NumberField
+        label="Flow temperature"
+        suffix="°C"
+        :model-value="heating.flowTempC"
+        :min="25"
+        :max="55"
+        :step="1"
+        @update:model-value="
+          projectStore.updateSettings({ heating: { ...heating, flowTempC: $event } })
+        "
+      />
+      <NumberField
+        label="Design drop"
+        suffix="K"
+        :model-value="heating.deltaTK"
+        :min="3"
+        :max="15"
+        :step="1"
+        @update:model-value="
+          projectStore.updateSettings({ heating: { ...heating, deltaTK: $event } })
+        "
+      />
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        {{ heating.flowTempC }} / {{ heating.flowTempC - heating.deltaTK }} °C. The floor is a
+        big emitter running cool: the surface may not pass 29 °C in a living space, which caps
+        it at about {{ Math.round(maxFlux(29, heating.roomTempC)) }} W/m² over a
+        {{ heating.roomTempC }} °C room whatever is buried in it. A wider drop means less water
+        round the loops and less pressure to push it.
+      </p>
+      <label class="flex items-center justify-between py-1">
+        <span class="text-ink-400">Floor covering</span>
+        <select
+          class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+          :value="heating.covering"
+          @change="
+            projectStore.updateSettings({
+              heating: {
+                ...heating,
+                covering: ($event.target as HTMLSelectElement).value as FloorCovering,
+              },
+            })
+          "
+        >
+          <option v-for="(label, key) in COVERING_LABEL" :key="key" :value="key">
+            {{ label }}
+          </option>
+        </select>
+      </label>
+      <NumberField
+        label="Screed over pipe"
+        suffix="mm"
+        :model-value="heating.screedCover"
+        :min="20"
+        :max="120"
+        :step="5"
+        @update:model-value="
+          projectStore.updateSettings({ heating: { ...heating, screedCover: $event } })
+        "
+      />
+      <NumberField
+        label="Insulation"
+        suffix="m²K/W"
+        :model-value="heating.insulationR"
+        :min="0"
+        :max="4"
+        :step="0.25"
+        @update:model-value="
+          projectStore.updateSettings({ heating: { ...heating, insulationR: $event } })
+        "
+      />
+      <p class="mt-1 text-[11px] leading-relaxed text-ink-400">
+        EN 1264-4 asks for {{ MIN_SCREED_COVER }} mm of screed over the pipe and 1,25 m²K/W of
+        insulation under it over the ground — about
+        {{ insulationThickness(heating.insulationR) }} mm of EPS at this setting. Rooms are
+        heated unless their inspector says otherwise; the loops are drawn from the nearest
+        manifold on their own storey.
       </p>
     </PanelSection>
 

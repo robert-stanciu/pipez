@@ -86,6 +86,108 @@ export interface PathResult {
 }
 
 /**
+ * Every shortest path from one source, as a lookup.
+ *
+ * `shortestPathToSet` stops at the first target it reaches, which is right when there is one
+ * destination and wasteful when there are twenty — a manifold feeding twenty loops would
+ * otherwise re-run the same search twenty times over the same graph. This runs it once and
+ * lets each destination read its own route back out of the finished tree.
+ */
+export interface PathTree {
+  /** The route to a node, or null when it was never reached. */
+  to(node: number): PathResult | null
+}
+
+export function shortestPaths(
+  graph: RouteGraph,
+  source: number,
+  options: SearchOptions,
+): PathTree {
+  const stateCount = graph.nodeCount * DIR_COUNT
+  const dist = new Float64Array(stateCount).fill(Infinity)
+  const prevState = new Int32Array(stateCount).fill(-1)
+  const prevEdge = new Int32Array(stateCount).fill(-1)
+  const visited = new Uint8Array(stateCount)
+
+  const startState = source * DIR_COUNT + DIR_NONE
+  dist[startState] = 0
+  const heap = new MinHeap()
+  heap.push(0, startState)
+
+  while (heap.size > 0) {
+    const top = heap.pop()
+    if (!top) break
+    const state = top.item
+    if (visited[state]) continue
+    visited[state] = 1
+
+    const node = (state / DIR_COUNT) | 0
+    const arrivedFrom = state % DIR_COUNT
+
+    for (const edge of graph.adj[node]) {
+      const reused = options.usedEdges.has(edge.id)
+      let step = reused ? edge.cost * options.reuseDiscount : edge.cost
+      if (arrivedFrom !== DIR_NONE && arrivedFrom !== edge.dir && !reused) {
+        step += options.turnPenalty
+      }
+      const nextState = edge.to * DIR_COUNT + edge.dir
+      const candidate = top.cost + step
+      if (candidate < dist[nextState]) {
+        dist[nextState] = candidate
+        prevState[nextState] = state
+        prevEdge[nextState] = edge.id
+        heap.push(candidate, nextState)
+      }
+    }
+  }
+
+  return {
+    to(node: number): PathResult | null {
+      // The cheapest way of arriving, over every direction it could have arrived from.
+      let best = -1
+      let bestCost = Infinity
+      for (let dir = 0; dir < DIR_COUNT; dir++) {
+        const state = node * DIR_COUNT + dir
+        if (dist[state] < bestCost) {
+          bestCost = dist[state]
+          best = state
+        }
+      }
+      if (best < 0 || !Number.isFinite(bestCost)) return null
+      return reconstruct(graph, prevState, prevEdge, best, bestCost)
+    },
+  }
+}
+
+function reconstruct(
+  graph: RouteGraph,
+  prevState: Int32Array,
+  prevEdge: Int32Array,
+  goalState: number,
+  cost: number,
+): PathResult {
+  const path: number[] = []
+  const edgeIds: number[] = []
+  let state = goalState
+  while (state >= 0) {
+    path.push((state / DIR_COUNT) | 0)
+    const edge = prevEdge[state]
+    if (edge >= 0) edgeIds.push(edge)
+    state = prevState[state]
+  }
+  path.reverse()
+  edgeIds.reverse()
+
+  let length = 0
+  for (let i = 1; i < path.length; i++) {
+    const a = graph.position(path[i - 1])
+    const b = graph.position(path[i])
+    length += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z)
+  }
+  return { path, edgeIds, cost, length }
+}
+
+/**
  * Dijkstra from `source`, stopping at the first node for which `isTarget` holds.
  *
  * Returns null when no target is reachable.

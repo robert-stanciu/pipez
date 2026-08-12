@@ -2,9 +2,9 @@
 
 Browser-based designer for domestic building services. Draw rooms across as many storeys as
 the building has, connect them, place fixtures, mark where the services enter and leave — and
-the app computes the pipe and cable runs for you: cold water, hot water, gravity drainage and
-electrical circuits, complete with the vertical stacks between floors, sized from the
-standards, drawn in 2D and 3D, and totalled into a bill of materials.
+the app computes the pipe and cable runs for you: cold water, hot water, gravity drainage,
+electrical circuits and underfloor heating, complete with the vertical stacks between floors,
+sized from the standards, drawn in 2D and 3D, and totalled into a bill of materials.
 
 Everything runs in the browser. There is no server and no account; projects are files.
 
@@ -40,9 +40,11 @@ storey's height moves everything above it.
 along it, so they follow when the wall moves. Each fixture carries typed connection ports and
 its load figures; those are what the solver actually connects.
 
-**Mark** the service points — water entry, waste outlet, consumer unit. Every network is a
-tree rooted at one of them. Water comes into a building once, so placing the entry again moves
-it; drainage and boards can have several, so placing those again adds one.
+**Mark** the service points — water entry, waste outlet, consumer unit, heating manifold. Every
+network starts at one of them. Water comes into a building once, so placing the entry again
+moves it; drainage, boards and manifolds can have several, so placing those again adds one. A
+manifold is what turns underfloor heating on: place one and its storey is heated, in the rooms
+it can reach.
 
 The solve then runs automatically, in a worker, debounced behind your edits.
 
@@ -231,6 +233,54 @@ and gives the shortest runs to the lights, or **under the floor**, in the screed
 the shortest runs to the sockets. The drops to each point stay inside the vertical zones
 either way.
 
+**Underfloor heating is laid, not routed.** Every other system is a tree that has to reach
+somewhere. A heating loop has nowhere to get to: it is one unbroken length of pipe off a coil
+that leaves the manifold, covers a floor evenly, and comes back — with no joint anywhere in
+the screed, because a joint in a screed is a leak you cannot reach. So the heating solver
+does not use the Steiner tree at all. It uses the graph for two things only: the **leaders**
+between a manifold and a room, and the **primary** flow and return between the heat source and
+each manifold.
+
+Place a manifold and the storey it stands on is heated. Every room on that storey goes to its
+nearest manifold — a room can be pointed at a particular one, or taken off heating entirely,
+in its inspector — and the loops are drawn from where the manifold lands. Move it and they are
+re-drawn: the leaders are pipe off the same coil, so a manifold in the middle of the plan buys
+floor area at the far end of it.
+
+The pattern is a **serpentine with a perimeter return**. The pipe leaves the manifold side of
+the room, meanders across the interior at the design pitch, and comes home round the outside.
+That gets three things at once: both ends finish at the same corner, so the flow and return
+leave together instead of one of them crossing the coil to get out; the perimeter leg puts a
+second run along the external wall, where the losses are; and nothing crosses anything. A
+counterflow (bifilar) meander — the obvious alternative, and thermally the better one — cannot
+manage the last of those: its end turns interleave, and on a plan they intersect however they
+are drawn. A room too large for one loop is cut into bands across its long axis, each band
+grown past its share so the two coils meet at the design pitch rather than leaving a cold
+strip down the middle of the floor.
+
+**The floor is sized by how warm it is allowed to get.** EN 1264-2 caps the mean surface
+temperature at 29 °C in a living space, 33 °C in a bathroom; at 29 °C over a 20 °C room that
+is about 100 W/m², whatever is buried in it. What a particular floor gives is worked out from
+the resistance of its build-up — the screed over the pipe, the covering on top, the surface
+film, and the spreading the pitch imposes — driven by the logarithmic mean water-to-room
+excess the standard defines, not the arithmetic mean of the two ends. Pitch enters as a
+spreading resistance rather than a table of factors, which is the same physics the factors
+were fitted to; it is also why doubling the pitch does not halve the output, it mostly just
+makes the floor stripy. The covering is the biggest lever there is: the same pipe at the same
+temperature gives a bit under half as much under carpet as under tile.
+
+Every loop is then checked on the water side and on the schedule: velocity inside the band
+that carries air along to the manifold, pressure inside what a manifold circulator can be
+relied on for, length inside what the pipe allows — **leaders included, because they come off
+the same coil** — and the loops on one manifold close enough in length that its flow meters
+can balance them. EN 1264-4's execution rules are checked too: 45 mm of screed over the crown
+of the pipe, the insulation resistance the storey underneath asks for, and a movement joint
+around any heated field over 40 m² or 8 m on a side.
+
+The manifold schedule sits in the Checks column, one block per manifold, and is also written
+to the CSV: port, room, length, area, pitch, output, surface temperature against its limit,
+flow, velocity and pressure drop — the sheet the flow meters are actually set from.
+
 **What to buy, and where.** The bill of materials is what the design *needs*; the shopping
 list is what you would actually order. It renames every line into the words a Romanian
 merchant's catalogue uses, converts the standards' nominal bores into the sizes on the shelf
@@ -250,6 +300,7 @@ Swappable, in `src/domain/standards/`:
 |---|---|
 | Drainage: discharge units, `Qww = K·√ΣDU`, diameters, falls, unvented limits | EN 12056-2, System I |
 | Supply: loading units, diameters, hot dead-leg limit | EN 806-3 |
+| Underfloor heating: surface temperature limits, output, loop hydraulics, screed and insulation | EN 1264-2 / -4 |
 | Circuits, cable sizing, volt drop, diversity, installation zones | HD 60364 (RO I7), DIN 18015-3 |
 
 Sizes accumulate towards the root and never reduce downstream. Anything the solver cannot
@@ -271,7 +322,8 @@ it was.
 ```
 src/
 ├─ domain/          pure TS: model, geometry, catalogue (fixtures · suppliers), standards, routing
-│  └─ routing/      graph · search · steiner · waste · supply · electrical · bends · fittings
+│  └─ routing/      graph · search · steiner · waste · supply · electrical · heating · loops
+│                   · bends · fittings
 ├─ workers/         the solver, off the main thread
 ├─ stores/          pinia: project (with undo) · selection · view · plan · routing
 ├─ three/           the one place mm/z-up becomes m/y-up
@@ -324,6 +376,25 @@ angles that are neither axis-aligned nor 45°; going diagonally is shorter where
 and is declined where it would not pay; and switching strategy leaves supply and cabling
 alone.
 
+`src/domain/routing/heating.test.ts` covers the coils. The properties that matter are the ones
+you cannot see in a screenshot: a coil is **one unbroken chain** with exactly two ends and
+nothing that branches — a tee in a screed is not a thing — and **nothing in it crosses anything
+else in it**, which is the invariant that rules the counterflow meander out. Beyond that: the
+pipe keeps its clearance from every wall; a WC or a bath takes floor out of the coil rather
+than being laid under; a room too big for one loop is split, and the parts come out at the
+same pitch rather than paying for the split with a bare strip between them; bands cover the
+room between them and no more; a room with nothing left to lay in is reported rather than
+skipped; every heated room reaches a manifold on its own storey; ports are numbered without
+gaps; the manifold totals what is ported on it and its pump covers the worst loop; a loop is
+measured with its leaders; the coil ordered adds up to the coil drawn; and no floor goes over
+its surface temperature limit without a warning saying so.
+
+The EN 1264 arithmetic is checked on its own terms too — that the limiting flux over a living
+room comes out at the familiar ~100 W/m², that surface temperature and output stay two
+readings of the same number, that the log mean is used rather than the arithmetic one, that
+carpet costs over half the output, and that opening the pitch out costs far less than
+proportionally.
+
 `src/three/scene.test.ts` checks the bend geometry itself — that the torus drawn at a corner
 starts exactly where the pipe stops being straight and ends exactly where it resumes, for
 turns in plan, at 45°, and from a vertical drop into a horizontal branch. A mis-oriented
@@ -336,9 +407,15 @@ re-solve; place a fixture upstairs and watch the stack resize; add a storey, dra
 it, and undo; tick "Only this storey (3D)" to isolate a floor; save, reload, and confirm the
 autosave restores.
 
+Tick off every system but the heating and orbit the 3D view down: the floors go see-through
+with the walls, which is the only way to look at anything buried in one, and the coils read
+storey by storey. Drag a manifold across the hall and watch every loop on that floor re-draw
+around it.
+
 The sample deliberately ships with live warnings — two basins past the EN 12056 unvented run
-limit for DN40, and a hot dead leg over the EN 806 limit — so the validation is visible rather
-than theoretical.
+limit for DN40, a hot dead leg over the EN 806 limit, and a spread of heating loop lengths on
+each manifold that its flow meters would struggle to balance — so the validation is visible
+rather than theoretical.
 
 ## Notes
 

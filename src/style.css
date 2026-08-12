@@ -2,7 +2,7 @@
 
 /*
  * A single dark theme. A drawing tool is looked at for hours and the plan itself carries all
- * the colour that matters — the four system colours have to stay unambiguous against the
+ * the colour that matters — the five system colours have to stay unambiguous against the
  * background, which a light surface makes harder.
  */
 @theme {
@@ -22,6 +22,7 @@
   --color-hot: #ef4444;
   --color-waste: #a1887f;
   --color-power: #f59e0b;
+  --color-heating: #a855f7;
 }
 
 :root {

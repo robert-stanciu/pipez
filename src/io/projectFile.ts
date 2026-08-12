@@ -29,6 +29,16 @@ const level = z.object({
   slabThickness: z.number().nonnegative(),
 })
 
+const covering = z.enum(['tile', 'stone', 'laminate', 'wood', 'carpet'])
+
+const roomHeating = z.object({
+  enabled: z.boolean().default(true),
+  spacing: z.number().positive().nullable().default(null),
+  roomTempC: z.number().nullable().default(null),
+  covering: covering.nullable().default(null),
+  manifoldId: z.string().nullable().default(null),
+})
+
 const room = z.object({
   id: z.string(),
   name: z.string(),
@@ -38,6 +48,9 @@ const room = z.object({
   floorZ: z.number(),
   wallThickness: z.number().positive(),
   walls: z.array(wall),
+  // Added with underfloor heating. A room written before it is heated on the project's own
+  // terms, which is what an unannotated room has always meant.
+  heating: roomHeating.optional(),
 })
 
 const opening = z.object({
@@ -69,7 +82,7 @@ const fixture = z.object({
 
 const servicePoint = z.object({
   id: z.string(),
-  kind: z.enum(['waterEntry', 'wasteOutlet', 'electricalPanel']),
+  kind: z.enum(['waterEntry', 'wasteOutlet', 'electricalPanel', 'heatingManifold']),
   name: z.string(),
   levelId: z.string(),
   roomId: z.string().nullable(),
@@ -132,6 +145,31 @@ const settings = z.object({
     designSlope: z.number().positive(),
     maxSlope: z.number().positive(),
   }),
+  // Added with underfloor heating. A file written before it has no manifolds in it, so the
+  // heating solver has nothing to do and the defaults are never consulted.
+  heating: z
+    .object({
+      pipe: z.enum(['pert16', 'pert17', 'pert20', 'multi16']).default('pert16'),
+      spacing: z.number().positive().default(150),
+      flowTempC: z.number().positive().default(38),
+      deltaTK: z.number().positive().default(8),
+      roomTempC: z.number().default(20),
+      covering: covering.default('tile'),
+      pattern: z.enum(['serpentine', 'perimeter']).default('serpentine'),
+      screedCover: z.number().nonnegative().default(45),
+      insulationR: z.number().nonnegative().default(1.25),
+    })
+    .default({
+      pipe: 'pert16',
+      spacing: 150,
+      flowTempC: 38,
+      deltaTK: 8,
+      roomTempC: 20,
+      covering: 'tile',
+      pattern: 'serpentine',
+      screedCover: 45,
+      insulationR: 1.25,
+    }),
 })
 
 export const projectSchema = z.object({
@@ -146,6 +184,7 @@ export const projectSchema = z.object({
     drainage: { ...DEFAULT_SETTINGS.drainage, ...(partial.drainage ?? {}) },
     electrical: { ...DEFAULT_SETTINGS.electrical, ...(partial.electrical ?? {}) },
     supply: { ...DEFAULT_SETTINGS.supply, ...(partial.supply ?? {}) },
+    heating: { ...DEFAULT_SETTINGS.heating, ...(partial.heating ?? {}) },
   })),
   levels: z.array(level).min(1),
   rooms: z.array(room),

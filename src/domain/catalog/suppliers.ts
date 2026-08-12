@@ -27,7 +27,14 @@
  * as knowledge.
  */
 
-import type { BomLine, Circuit, PanelDesign, Project, RoutingResult } from '../types.ts'
+import type {
+  BomLine,
+  Circuit,
+  ManifoldDesign,
+  PanelDesign,
+  Project,
+  RoutingResult,
+} from '../types.ts'
 
 /* --------------------------------------------------------------------- trades */
 
@@ -35,13 +42,14 @@ import type { BomLine, Circuit, PanelDesign, Project, RoutingResult } from '../t
  * How a builder splits the job, which is not how the solver splits it: cold and hot are one
  * visit to one aisle and one fitter, even though they are two networks.
  */
-export type Trade = 'drainage' | 'water' | 'electrical'
+export type Trade = 'drainage' | 'water' | 'heating' | 'electrical'
 
-export const TRADES: Trade[] = ['drainage', 'water', 'electrical']
+export const TRADES: Trade[] = ['drainage', 'water', 'heating', 'electrical']
 
 export const TRADE_LABEL: Record<Trade, string> = {
   drainage: 'Drainage',
   water: 'Water supply',
+  heating: 'Underfloor heating',
   electrical: 'Electrical',
 }
 
@@ -49,6 +57,7 @@ export const TRADE_LABEL: Record<Trade, string> = {
 export const TRADE_LABEL_RO: Record<Trade, string> = {
   drainage: 'Canalizare',
   water: 'Instalații sanitare',
+  heating: 'Încălzire în pardoseală',
   electrical: 'Electrice',
 }
 
@@ -160,6 +169,7 @@ interface Part {
 type Allowance =
   | { kind: 'none' }
   | { kind: 'bars'; length: number }
+  | { kind: 'coils'; length: number }
   | { kind: 'slack'; fraction: number }
   | { kind: 'spare'; fraction: number; threshold: number }
 
@@ -168,6 +178,14 @@ const NONE: Allowance = { kind: 'none' }
 const PVC_BARS: Allowance = { kind: 'bars', length: 3 }
 /** PPR comes in 4 m bars, and welding one costs a stub at each end. */
 const PPR_BARS: Allowance = { kind: 'bars', length: 4 }
+/**
+ * Underfloor heating pipe is sold on coils, and it has to be: a loop is one unbroken length
+ * with no joint anywhere in the screed, so it cannot be made up out of bars. 200 m is the
+ * common domestic coil.
+ */
+const UFH_COILS: Allowance = { kind: 'coils', length: 200 }
+/** Edge strip comes on 25 m rolls. */
+const STRIP_ROLLS: Allowance = { kind: 'coils', length: 25 }
 const CABLE_SLACK: Allowance = { kind: 'slack', fraction: 0.1 }
 const FITTING_SPARE: Allowance = { kind: 'spare', fraction: 0.1, threshold: 10 }
 
@@ -356,6 +374,129 @@ function supplyFitting(
   }
 }
 
+/* ----------------------------------------------------------------- heating */
+
+/**
+ * The coil, named the way it is racked.
+ *
+ * The schedule already gives the pipe in the form the trade uses — `Ø16 × 2,0 PE-RT` — so the
+ * only work here is turning it into Romanian and pulling the digits back out for the search
+ * box, which is not going to find anything with a multiplication sign in it.
+ */
+function ufhPipePart(label: string): Part {
+  const size = /Ø(\d+)\D+([\d,.]+)/.exec(label)
+  const od = size ? size[1] : '16'
+  const wall = size ? size[2].replace(',', '.') : '2'
+  const composite = /Al/.test(label)
+  const gauge = `${od}x${wall}`
+  return {
+    trade: 'heating',
+    key: `ufh-pipe-${gauge}-${composite ? 'multi' : 'pert'}`,
+    description: `Underfloor heating pipe ${label}`,
+    romanian: composite
+      ? `Țeavă multistrat PEX-AL-PEX ${gauge} pentru încălzire în pardoseală`
+      : `Țeavă PE-RT ${gauge} cu barieră de oxigen pentru încălzire în pardoseală`,
+    terms: composite
+      ? `teava multistrat ${gauge} incalzire pardoseala`
+      : `teava PERT ${gauge} incalzire pardoseala`,
+    allowance: UFH_COILS,
+  }
+}
+
+function ufhClip(label: string): Part {
+  const od = /Ø(\d+)/.exec(label)?.[1] ?? '16'
+  return {
+    trade: 'heating',
+    key: `ufh-clip-${od}`,
+    description: `Pipe clip for Ø${od} mm underfloor heating pipe`,
+    romanian: `Clemă de fixare țeavă Ø${od} pentru încălzire în pardoseală`,
+    terms: `clema fixare teava ${od} incalzire pardoseala`,
+    allowance: { kind: 'spare', fraction: 0.1, threshold: 10 },
+  }
+}
+
+const EDGE_STRIP: Part = {
+  trade: 'heating',
+  key: 'ufh-edge-strip',
+  description: 'Perimeter edge insulation strip for the screed',
+  romanian: 'Bandă perimetrală pentru șapă încălzită',
+  terms: 'banda perimetrala sapa incalzire pardoseala',
+  allowance: STRIP_ROLLS,
+}
+
+/**
+ * What a manifold is, besides the pipe that reaches it.
+ *
+ * None of this is in the routed geometry — the same argument as the consumer unit. The board
+ * is derived from `PanelDesign` and the manifold from `ManifoldDesign`, because both are
+ * things the solver worked out rather than things it drew.
+ */
+function manifoldParts(
+  design: ManifoldDesign,
+  storey: string,
+): Array<{ part: Part; quantity: number; unit: 'm' | 'pc'; context: string }> {
+  const context = `${design.name} — ${storey}`
+  const rows: Array<{ part: Part; quantity: number; unit: 'm' | 'pc'; context: string }> = []
+  const add = (part: Part, quantity: number, unit: 'm' | 'pc' = 'pc') =>
+    rows.push({ part, quantity, unit, context })
+
+  add(
+    {
+      trade: 'heating',
+      key: `manifold-${design.ports}`,
+      // Flow meters on the flow bar are what the loop-length spread is balanced out at, and
+      // without them the imbalance the schedule reports cannot be corrected on site at all.
+      description: `Stainless manifold, ${design.ports} ports, with flow meters and lockshields`,
+      romanian: `Distribuitor inox ${design.ports} circuite cu debitmetre`,
+      terms: `distribuitor incalzire pardoseala ${design.ports} circuite debitmetre`,
+      allowance: NONE,
+    },
+    1,
+  )
+
+  add(
+    {
+      trade: 'heating',
+      key: `manifold-cabinet-${design.ports}`,
+      description: `Recessed manifold cabinet for ${design.ports} ports`,
+      romanian: `Cutie distribuitor încastrată ${design.ports} circuite`,
+      terms: `cutie distribuitor incalzire ${design.ports} circuite`,
+      allowance: NONE,
+    },
+    1,
+  )
+
+  add(
+    {
+      trade: 'heating',
+      key: 'manifold-mixing-group',
+      // The floor runs far cooler than the boiler does, so something has to stand between
+      // them — and that something is also the pump the loops are sized against.
+      description: `Pump and mixing group, ${design.flowTempC} °C flow, ${design.pumpHeadKpa.toFixed(0)} kPa`,
+      romanian: 'Grup de pompare și amestec pentru încălzire în pardoseală',
+      terms: 'grup pompare amestec incalzire pardoseala',
+      allowance: NONE,
+    },
+    1,
+  )
+
+  // Two per loop: one on the flow bar and one on the return, and they are the only joint the
+  // pipe is allowed to have between here and the far end of the room.
+  add(
+    {
+      trade: 'heating',
+      key: 'manifold-eurocone',
+      description: 'Eurocone compression coupling for the manifold',
+      romanian: 'Racord olandez eurocon pentru distribuitor',
+      terms: 'racord eurocon distribuitor incalzire pardoseala',
+      allowance: NONE,
+    },
+    design.loops * 2,
+  )
+
+  return rows
+}
+
 /* -------------------------------------------------------------- electrical */
 
 function cablePart(cores: number, mm2: number): Part {
@@ -430,8 +571,11 @@ function parseFitting(item: string): ParsedItem | null {
  * main and the branch it feeds. They are all matched here and merged downstream.
  */
 const PIPE_ITEM =
-  /^(Cold water pipe|Hot water pipe|Waste pipe|Vent pipe|Cold water rising main|Hot water rising main|Soil stack) (?:DN(\d+)|Ø(\d+) [\w-]+)$/
+  /^(Cold water pipe|Hot water pipe|Waste pipe|Vent pipe|Cold water rising main|Hot water rising main|Soil stack|Heating pipe|Heating riser) (?:DN(\d+)|Ø(\d+) [\w-]+)$/
 const CABLE_ITEM = /^(?:Cable|Cable riser) (\d+) × ([\d.]+) mm²$/
+/** The coil, which the schedule already names in the form it is coiled in. */
+const UFH_PIPE_ITEM = /^Underfloor heating pipe (.+)$/
+const UFH_CLIP_ITEM = /^Pipe clip for (.+)$/
 /** `MCB C16 · 6 kA — Kitchen sockets`, and its three-phase form `MCB 3P+N C16 · 6 kA — …`. */
 const MCB_ITEM = /^MCB (?:(3P\+N) )?([BC])(\d+) · ([\d.]+) kA — (.+)$/
 
@@ -444,7 +588,14 @@ const MCB_ITEM = /^MCB (?:(3P\+N) )?([BC])(\d+) · ([\d.]+) kA — (.+)$/
  */
 function untranslated(line: BomLine): Part {
   return {
-    trade: line.system === 'waste' ? 'drainage' : line.system === 'power' ? 'electrical' : 'water',
+    trade:
+      line.system === 'waste'
+        ? 'drainage'
+        : line.system === 'power'
+          ? 'electrical'
+          : line.system === 'heating'
+            ? 'heating'
+            : 'water',
     key: `raw-${line.system}-${line.item}`,
     description: line.item,
     romanian: line.item,
@@ -454,11 +605,22 @@ function untranslated(line: BomLine): Part {
 }
 
 function partFor(line: BomLine, circuits: Circuit[]): Part {
+  if (line.item === 'Edge insulation strip') return EDGE_STRIP
+
+  const coil = UFH_PIPE_ITEM.exec(line.item)
+  if (coil) return ufhPipePart(coil[1])
+
+  const clip = UFH_CLIP_ITEM.exec(line.item)
+  if (clip) return ufhClip(clip[1])
+
   const pipe = PIPE_ITEM.exec(line.item)
   if (pipe) {
     if (line.system === 'waste') return drainagePipe(Number(pipe[2]))
+    // The primary between the heat source and a manifold is hot pipe like any other, and it
+    // is the same product off the same rack — so it merges with the hot water rows.
+    const hot = line.system === 'hot' || line.system === 'heating'
     // The supply schedule already names the diameter it is sold in.
-    return supplyPipe(line.system === 'hot', Number(pipe[2] ?? pipe[3]), Boolean(pipe[3]))
+    return supplyPipe(hot, Number(pipe[2] ?? pipe[3]), Boolean(pipe[3]))
   }
 
   const cable = CABLE_ITEM.exec(line.item)
@@ -640,6 +802,14 @@ function applyAllowance(
         note: `${round2(required)} m of run; sold in ${allowance.length} m bars, so ${bars} bar${bars === 1 ? '' : 's'} — ${quantity} m — with the offcuts covering the 10% for cuts.`,
       }
     }
+    case 'coils': {
+      const coils = Math.max(1, Math.ceil((required * 1.1) / allowance.length))
+      const quantity = coils * allowance.length
+      return {
+        quantity,
+        note: `${round2(required)} m laid; sold on ${allowance.length} m coils, so ${coils} coil${coils === 1 ? '' : 's'} — ${quantity} m — with the rest covering the 10% no loop can be pieced together from.`,
+      }
+    }
     case 'slack': {
       const quantity = Math.ceil(required * (1 + allowance.fraction))
       return {
@@ -662,7 +832,7 @@ function applyAllowance(
 
 /* ---------------------------------------------------------------- the list */
 
-const TRADE_RANK: Record<Trade, number> = { drainage: 0, water: 1, electrical: 2 }
+const TRADE_RANK: Record<Trade, number> = { drainage: 0, water: 1, heating: 2, electrical: 3 }
 
 /**
  * Everything the design needs, as rows you could read out at a counter.
@@ -698,6 +868,12 @@ export function shoppingList(project: Project, result: RoutingResult): ShoppingI
 
   for (const panel of result.panels) {
     for (const row of panelParts(panel, storeyName(panel.levelId))) {
+      collect(row.part, row.unit, row.quantity, row.context)
+    }
+  }
+
+  for (const manifold of result.manifolds) {
+    for (const row of manifoldParts(manifold, storeyName(manifold.levelId))) {
       collect(row.part, row.unit, row.quantity, row.context)
     }
   }

@@ -24,7 +24,7 @@ describe('shopping list', () => {
     expect(items.length).toBeGreaterThan(0)
   })
 
-  it('covers all three trades', () => {
+  it('covers every trade', () => {
     const trades = new Set(items.map((item) => item.trade))
     for (const trade of TRADES) expect(trades).toContain(trade)
   })
@@ -80,13 +80,22 @@ describe('shopping list', () => {
     }
   })
 
-  it('buys pipe in whole bars', () => {
-    // Pipe is the case the allowance exists for: you cannot buy 6.25 m of anything.
-    const pipe = items.filter((item) => item.unit === 'm' && item.trade !== 'electrical')
-    expect(pipe.length).toBeGreaterThan(0)
-    for (const item of pipe) {
-      const bar = item.trade === 'drainage' ? 3 : 4
-      expect(item.quantity % bar).toBe(0)
+  it('buys pipe in whole bars, and coiled pipe in whole coils', () => {
+    // Pipe is the case the allowance exists for: you cannot buy 6.25 m of anything. What the
+    // unit *is* differs by trade — PVC and PPR come in bars, and a heating loop has to come
+    // off a coil, because it is one unbroken length with no joint allowed in the screed.
+    const packs: Array<{ match: RegExp; size: number }> = [
+      { match: /^teava PVC/, size: 3 },
+      { match: /^teava PPR/, size: 4 },
+      { match: /^teava (PERT|multistrat)/, size: 200 },
+      { match: /^banda perimetrala/, size: 25 },
+    ]
+    const measured = items.filter((item) => item.unit === 'm' && item.trade !== 'electrical')
+    expect(measured.length).toBeGreaterThan(0)
+    for (const item of measured) {
+      const pack = packs.find((candidate) => candidate.match.test(item.terms))
+      expect(pack, `no pack size known for "${item.terms}"`).toBeDefined()
+      expect(item.quantity % pack!.size).toBe(0)
       expect(item.quantity).toBeGreaterThanOrEqual(item.required)
     }
   })
@@ -137,6 +146,8 @@ describe('shopping list', () => {
       ...result,
       bom: [],
       panels: [],
+      manifolds: [],
+      loops: [],
       circuits: [],
     })
     expect(empty).toEqual([])

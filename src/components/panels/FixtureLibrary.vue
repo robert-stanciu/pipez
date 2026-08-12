@@ -21,12 +21,18 @@ const byCategory = computed(() => {
   return [...groups.entries()]
 })
 
-const SERVICES: ServiceKind[] = ['waterEntry', 'wasteOutlet', 'electricalPanel']
+const SERVICES: ServiceKind[] = [
+  'waterEntry',
+  'wasteOutlet',
+  'electricalPanel',
+  'heatingManifold',
+]
 
 const SERVICE_TINT: Record<ServiceKind, string> = {
   waterEntry: 'text-cold',
   wasteOutlet: 'text-waste',
   electricalPanel: 'text-power',
+  heatingManifold: 'text-heating',
 }
 
 const isFixtureActive = (def: FixtureDef) =>
@@ -104,7 +110,8 @@ function demand(def: FixtureDef): string {
 
     <PanelSection title="Service points">
       <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
-        Every network is routed from one of these. Place them first.
+        Every network is routed from one of these. Place them first. A manifold can go on each
+        storey — the heating loops are drawn from it, in the rooms it can reach.
       </p>
       <div class="flex flex-col gap-1.5">
         <button

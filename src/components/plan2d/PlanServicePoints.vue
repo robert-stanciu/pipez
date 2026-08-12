@@ -19,6 +19,7 @@ const STYLE: Record<ServiceKind, { fill: string; glyph: string }> = {
   waterEntry: { fill: '#3b82f6', glyph: 'W' },
   wasteOutlet: { fill: '#a1887f', glyph: 'D' },
   electricalPanel: { fill: '#f59e0b', glyph: 'E' },
+  heatingManifold: { fill: '#a855f7', glyph: 'M' },
 }
 
 const onActiveLevel = computed(() =>

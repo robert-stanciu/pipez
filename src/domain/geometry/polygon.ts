@@ -146,6 +146,74 @@ export function offsetPolygon(poly: Vec2[], distance: number): Vec2[] {
   return result
 }
 
+/**
+ * The part of a polygon on the inner side of a line — Sutherland–Hodgman against one
+ * half-plane.
+ *
+ * "Inner" is the side the normal points away from: a vertex is kept when
+ * `(p − origin) · normal ≤ 0`. Two clips with opposite normals cut a strip, which is how a
+ * room too big for one heating loop is divided into the bands each loop covers.
+ *
+ * Clipping a concave polygon against a half-plane can leave the result touching itself along
+ * the cut. That is harmless for the areas and offsets it is used for here, and rooms are
+ * rectangles and L-shapes rather than combs.
+ */
+export function clipToHalfPlane(poly: Vec2[], origin: Vec2, normal: Vec2): Vec2[] {
+  if (poly.length < 3) return []
+  const side = (p: Vec2): number => (p.x - origin.x) * normal.x + (p.y - origin.y) * normal.y
+
+  const out: Vec2[] = []
+  for (let i = 0; i < poly.length; i++) {
+    const current = poly[i]
+    const previous = poly[(i - 1 + poly.length) % poly.length]
+    const dCurrent = side(current)
+    const dPrevious = side(previous)
+
+    if (dCurrent <= 0) {
+      if (dPrevious > 0) {
+        const t = dPrevious / (dPrevious - dCurrent)
+        out.push(lerp(previous, current, t))
+      }
+      out.push({ ...current })
+    } else if (dPrevious <= 0) {
+      const t = dPrevious / (dPrevious - dCurrent)
+      out.push(lerp(previous, current, t))
+    }
+  }
+  return out.length >= 3 ? out : []
+}
+
+const lerp = (a: Vec2, b: Vec2, t: number): Vec2 => ({
+  x: a.x + (b.x - a.x) * t,
+  y: a.y + (b.y - a.y) * t,
+})
+
+/**
+ * The same offset applied to an **open** polyline: a second pipe running alongside the first
+ * at a fixed distance, which is what a flow-and-return pair is.
+ *
+ * Interior vertices are mitred by intersecting the two offset legs, so a right-angled turn
+ * comes out as a right-angled turn rather than as two lines with a notch between them. The
+ * two ends simply shift sideways, there being nothing to mitre against.
+ */
+export function offsetPolyline(points: Vec2[], distance: number): Vec2[] {
+  if (points.length < 2) return points.map((p) => ({ ...p }))
+  const out: Vec2[] = []
+  for (let i = 0; i < points.length; i++) {
+    const inbound = i > 0 ? norm2(sub2(points[i], points[i - 1])) : null
+    const outbound = i + 1 < points.length ? norm2(sub2(points[i + 1], points[i])) : null
+    const shift = (dir: Vec2) => add2(points[i], scale2(perp2(dir), distance))
+    if (!inbound && outbound) out.push(shift(outbound))
+    else if (inbound && !outbound) out.push(shift(inbound))
+    else if (inbound && outbound) {
+      const a = shift(inbound)
+      const b = shift(outbound)
+      out.push(lineIntersection(a, inbound, b, outbound) ?? b)
+    }
+  }
+  return out
+}
+
 /** Even-odd ray cast. Points exactly on the boundary may return either result. */
 export function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
   let inside = false

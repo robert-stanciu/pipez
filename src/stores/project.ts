@@ -31,6 +31,7 @@ import {
   createServicePoint,
   makeWalls,
   relevel,
+  roomHeating,
   sampleProject,
 } from '../domain/project.ts'
 import type {
@@ -40,6 +41,7 @@ import type {
   Opening,
   Project,
   Room,
+  RoomHeating,
   ServiceKind,
   ServicePoint,
 } from '../domain/types.ts'
@@ -210,6 +212,20 @@ export const useProjectStore = defineStore('project', () => {
     if (!room) return
     checkpoint()
     Object.assign(room, patch)
+    touch()
+  }
+
+  /**
+   * Change a room's underfloor heating.
+   *
+   * A room that has never said anything about heating has no record at all, so the patch is
+   * applied on top of a fresh default rather than to nothing.
+   */
+  function updateRoomHeating(roomId: string, patch: Partial<RoomHeating>): void {
+    const room = findRoom(project.value, roomId)
+    if (!room) return
+    checkpoint()
+    room.heating = { ...roomHeating(), ...room.heating, ...patch }
     touch()
   }
 
@@ -493,6 +509,7 @@ export const useProjectStore = defineStore('project', () => {
     pushWall,
     resizeWall,
     updateRoom,
+    updateRoomHeating,
     moveRoomToLevel,
     setWallLoadBearing,
     addFixtureAt,

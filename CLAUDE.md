@@ -45,11 +45,13 @@ vitest's `node` environment. Importing a store or a Vue ref into the domain brea
 ### The solve pipeline
 
 `solve(project)` in `src/domain/routing/index.ts` is the single entry point. It resolves plan
-geometry once (`levelShapes`) and shares it across four independent solvers — `routeWaste`,
-`routeSupply` for cold and hot, `routeElectrical` — then totals everything with `buildBom`.
-Adding or changing a service means touching that function, the `SystemKind` union in
+geometry once (`levelShapes`) and shares it across five independent solvers — `routeWaste`,
+`routeSupply` for cold and hot, `routeElectrical`, `routeHeating` — then totals everything with
+`buildBom`. Adding or changing a service means touching that function, the `SystemKind` union in
 `domain/types.ts`, and its `SYSTEM_LABEL` / `SYSTEM_COLOR` entries (the colours are shared by
-the 2D overlay and the 3D meshes so the two views read as one drawing).
+the 2D overlay and the 3D meshes so the two views read as one drawing). Several `Record<SystemKind, …>`
+tables elsewhere are exhaustive and will fail `typecheck` until they gain the new member —
+that is deliberate.
 
 **The solve must remain deterministic.** Ids come from `makeIdFactory` counters, iteration
 order is fixed, and nothing consults `Date.now()` or a random source. Determinism is what
@@ -75,6 +77,13 @@ makes the golden tests meaningful and stops the 3D scene from rebuilding on ever
   corners and junctions → `mergeCollinear` → `deriveFittings`. Fittings are read back off the
   finished geometry, so the schedule always describes what the drawing shows; bend bodies are
   not billed a second time as pipe.
+- `loops.ts` / `heating.ts` — the one solver that is **not** a tree. A heating loop is a single
+  unbroken length of pipe with no joint anywhere in the screed, so it is never bundled, never
+  merged with a neighbour and never given fittings — `deriveFittings` is deliberately not
+  called on it. `loops.ts` is pure covering geometry (line field, serpentine, perimeter return)
+  and touches no graph at all; `heating.ts` uses the graph only for the leaders and the
+  primary. If you change the pattern, the invariants to keep are in `heating.test.ts`: one
+  chain, two ends, no branch, nothing crossing anything.
 
 Anything the solver cannot make work becomes a located `RoutingWarning` rather than a
 plausible-looking drawing. Preserve that: never fall back to inventing geometry.
@@ -103,6 +112,9 @@ read them constantly. They can go stale:
   height, slab thickness or order.
 - `Room.walls` is index-aligned with `Room.outline` edges; regenerate with `makeWalls` when the
   vertex count changes.
+- `Room.heating` is optional and every field but `enabled` is nullable — a room that says
+  nothing is heated on the project's terms. Read it through `heatingOf(project, room)` rather
+  than reaching into it, so there is one definition of what a blank field means.
 
 ### Persistence
 
@@ -114,9 +126,15 @@ than trusted. Work autosaves to IndexedDB from `App.vue`, debounced.
 ### Standards
 
 `src/domain/standards/` is deliberately swappable: EN 12056-2 (drainage), EN 806-3 (supply),
-HD 60364 / RO I7 and DIN 18015-3 (electrical). Sizes accumulate towards the root and never
-reduce downstream. Keep new rules in these modules rather than inlining constants in the
-routers.
+EN 1264-2/-4 (underfloor heating), HD 60364 / RO I7 and DIN 18015-3 (electrical). Sizes
+accumulate towards the root and never reduce downstream. Keep new rules in these modules
+rather than inlining constants in the routers.
+
+Heating is sized the other way round from everything else: the binding constraint is the
+**surface temperature** people stand on, not the load. `en1264.ts` keeps the three
+calculations apart — what the floor may give at its limit, what this build-up does give, and
+what the water has to do to carry it — and reuses `pressureLossKpa` from `en806.ts` for the
+loop resistance.
 
 ## TypeScript notes
 
@@ -149,9 +167,14 @@ the two bathrooms are not stacked, so the upstairs soil stack has to find a wall
 on both storeys, and the kitchen is 17 m of branch from the outlet. Do not simplify it to make
 the engine's life easier.
 
+It carries a heating manifold on each storey, in the hall. Everything is heated except the
+three outdoor slabs and the plant room; the two bathrooms are set to 24 °C at a 100 mm pitch,
+which is the only place the sample overrides the project's heating defaults.
+
 It ships with live warnings on purpose (branches past the EN 12056 unvented limits, hot dead
-legs over the EN 806 limit), so validation is visible in the UI. Do not "fix" the sample to
-silence them. Warnings are fine; `error` severity is not — the sample must stay solvable.
+legs over the EN 806 limit, a heating loop-length spread the flow meters would struggle with),
+so validation is visible in the UI. Do not "fix" the sample to silence them. Warnings are fine;
+`error` severity is not — the sample must stay solvable.
 
 Two tests are coupled to the sample's contents rather than to invariants and will need
 updating if a room is renamed: `routing.test.ts` looks up `Bucătărie` and the first-floor

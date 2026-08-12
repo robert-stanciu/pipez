@@ -4,16 +4,28 @@ import { computed } from 'vue'
 
 import { fixtureDef } from '../../domain/catalog/fixtures.ts'
 import { wallLength } from '../../domain/edit.ts'
-import { entryOf, wallBehind, wallsOf } from '../../domain/model.ts'
-import { SERVICE_LABEL, SYSTEM_LABEL, type ConnectionEntry } from '../../domain/types.ts'
+import { entryOf, heatingOf, wallBehind, wallsOf } from '../../domain/model.ts'
+import {
+  COVERING_LABEL,
+  COVERING_RESISTANCE,
+  SPACINGS,
+} from '../../domain/standards/en1264.ts'
+import {
+  SERVICE_LABEL,
+  SYSTEM_LABEL,
+  type ConnectionEntry,
+  type FloorCovering,
+} from '../../domain/types.ts'
 import { useLevels } from '../../composables/useLevels.ts'
 import { useProjectStore } from '../../stores/project.ts'
+import { useRoutingStore } from '../../stores/routing.ts'
 import { useSelectionStore } from '../../stores/selection.ts'
 import NumberField from '../ui/NumberField.vue'
 import PanelSection from '../ui/PanelSection.vue'
 
 const projectStore = useProjectStore()
 const levels = useLevels()
+const routing = useRoutingStore()
 const selection = useSelectionStore()
 
 const project = computed(() => projectStore.project)
@@ -81,6 +93,23 @@ const fixtureRoomWalls = computed(() => {
   const owner = project.value.rooms.find((r) => r.id === fixture.value?.roomId)
   return owner ? wallsOf(owner) : []
 })
+
+/** The selected room's heating, with everything it does not override filled in. */
+const roomHeat = computed(() =>
+  room.value
+    ? heatingOf(project.value, room.value)
+    : { enabled: false, spacing: 150, roomTempC: 20, covering: 'tile' as FloorCovering, manifoldId: null },
+)
+
+/** What the solver actually laid in it — the answer to "did that setting do anything?". */
+const roomLoops = computed(() =>
+  routing.result.loops.filter((loop) => loop.roomId === room.value?.id),
+)
+
+/** Loops ported on the selected manifold, for its own inspector. */
+const manifold = computed(() =>
+  routing.result.manifolds.find((design) => design.id === service.value?.id) ?? null,
+)
 
 /** The wall a fixture is anchored to, for bounding its slide. */
 const fixtureWallLength = computed(() => {
@@ -175,6 +204,98 @@ const fixtureWallLength = computed(() => {
             <option v-for="l in levels.levels.value" :key="l.id" :value="l.id">{{ l.name }}</option>
           </select>
         </label>
+      </PanelSection>
+
+      <!-- Heating is a property of the floor, so it belongs to the room rather than to
+           anything placed in it. -->
+      <PanelSection title="Underfloor heating">
+        <label class="flex items-center justify-between gap-2 py-1">
+          <span class="text-ink-400">Heated floor</span>
+          <input
+            type="checkbox"
+            class="size-4 accent-[var(--color-accent)]"
+            :checked="roomHeat.enabled"
+            @change="
+              projectStore.updateRoomHeating(room.id, {
+                enabled: ($event.target as HTMLInputElement).checked,
+              })
+            "
+          />
+        </label>
+        <template v-if="roomHeat.enabled">
+          <label class="flex items-center justify-between gap-2 py-1">
+            <span class="text-ink-400">Pipe pitch</span>
+            <select
+              class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+              :value="room.heating?.spacing ?? ''"
+              @change="
+                projectStore.updateRoomHeating(room.id, {
+                  spacing: Number(($event.target as HTMLSelectElement).value) || null,
+                })
+              "
+            >
+              <option value="">Project ({{ project.settings.heating.spacing }} mm)</option>
+              <option v-for="pitch in SPACINGS" :key="pitch" :value="pitch">{{ pitch }} mm</option>
+            </select>
+          </label>
+          <label class="flex items-center justify-between gap-2 py-1">
+            <span class="text-ink-400">Floor covering</span>
+            <select
+              class="w-32 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-ink-100 outline-none focus:border-accent"
+              :value="room.heating?.covering ?? ''"
+              @change="
+                projectStore.updateRoomHeating(room.id, {
+                  covering: (($event.target as HTMLSelectElement).value || null) as
+                    | FloorCovering
+                    | null,
+                })
+              "
+            >
+              <option value="">
+                Project ({{ COVERING_LABEL[project.settings.heating.covering].toLowerCase() }})
+              </option>
+              <option v-for="(label, key) in COVERING_LABEL" :key="key" :value="key">
+                {{ label }}
+              </option>
+            </select>
+          </label>
+          <NumberField
+            label="Design temperature"
+            suffix="°C"
+            :model-value="roomHeat.roomTempC"
+            :min="10"
+            :max="30"
+            :step="1"
+            @update:model-value="projectStore.updateRoomHeating(room.id, { roomTempC: $event })"
+          />
+          <p class="mt-1 text-[11px] leading-relaxed text-ink-400">
+            <template v-if="roomHeat.roomTempC >= 24">
+              Designed at {{ roomHeat.roomTempC }} °C, so EN 1264-2 allows the floor to reach
+              33 °C rather than 29 — a bathroom is stood on barefoot and briefly.
+            </template>
+            <template v-else>
+              The floor may reach 29 °C mean surface temperature, which is about 100 W/m² over a
+              {{ roomHeat.roomTempC }} °C room however it is piped.
+            </template>
+            {{ COVERING_LABEL[roomHeat.covering] }} adds
+            {{ COVERING_RESISTANCE[roomHeat.covering].toFixed(3) }} m²K/W over the screed.
+          </p>
+          <ul v-if="roomLoops.length" class="mt-2 flex flex-col gap-1 border-t border-ink-800 pt-2">
+            <li
+              v-for="loop in roomLoops"
+              :key="loop.id"
+              class="flex items-center justify-between gap-2 text-[11px]"
+            >
+              <span class="text-ink-300">
+                Loop {{ loop.port }}{{ loop.partOf ? ` · part ${loop.partOf}` : '' }}
+              </span>
+              <span class="numeric text-ink-400">
+                {{ (loop.length / 1000).toFixed(0) }} m · {{ Math.round(loop.fluxW) }} W/m² ·
+                {{ loop.surfaceTempC.toFixed(1) }} °C
+              </span>
+            </li>
+          </ul>
+        </template>
       </PanelSection>
 
       <PanelSection title="Walls" :badge="room.walls.length">
@@ -443,6 +564,45 @@ const fixtureWallLength = computed(() => {
           Negative values sit below the floor. The whole drainage network falls towards this
           level, so lowering it buys headroom for longer runs.
         </p>
+        <p
+          v-else-if="service.kind === 'heatingManifold'"
+          class="mt-1 text-[11px] leading-relaxed text-ink-400"
+        >
+          Every heated room on this storey is served from its nearest manifold. Move this one
+          and the loops are re-drawn from where it lands — the leaders are pipe off the same
+          coil, so a manifold in the middle of the plan buys floor area at the far end of it.
+        </p>
+      </PanelSection>
+
+      <PanelSection v-if="manifold" title="Manifold" :badge="manifold.loops">
+        <dl class="grid grid-cols-2 gap-y-1 text-[11px]">
+          <dt class="text-ink-400">Ports used</dt>
+          <dd class="numeric text-right text-ink-200">{{ manifold.loops }}</dd>
+          <dt class="text-ink-400">Flow / return</dt>
+          <dd class="numeric text-right text-ink-200">
+            {{ manifold.flowTempC }} / {{ manifold.returnTempC }} °C
+          </dd>
+          <dt class="text-ink-400">Output</dt>
+          <dd class="numeric text-right text-ink-200">{{ Math.round(manifold.outputW) }} W</dd>
+          <dt class="text-ink-400">Flow rate</dt>
+          <dd class="numeric text-right text-ink-200">{{ Math.round(manifold.flowKgH) }} kg/h</dd>
+          <dt class="text-ink-400">Pump head</dt>
+          <dd class="numeric text-right text-ink-200">
+            {{ manifold.pumpHeadKpa.toFixed(0) }} kPa
+          </dd>
+          <dt class="text-ink-400">Loop spread</dt>
+          <dd class="numeric text-right text-ink-200">
+            {{ (manifold.shortestLoop / 1000).toFixed(0) }}–{{
+              (manifold.longestLoop / 1000).toFixed(0)
+            }}
+            m
+          </dd>
+          <dt class="text-ink-400">Primary</dt>
+          <dd class="numeric text-right text-ink-200">
+            Ø{{ manifold.primarySize }} ·
+            {{ (manifold.primaryLength / 1000).toFixed(1) }} m
+          </dd>
+        </dl>
       </PanelSection>
     </template>
 

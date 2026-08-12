@@ -19,6 +19,7 @@ import {
 } from './geometry/vec.ts'
 import type {
   ConnectionEntry,
+  FloorCovering,
   ServicePoint,
   Fixture,
   Level,
@@ -123,6 +124,36 @@ export function roomAt(project: Project, p: Vec2, levelId?: string | null): Room
     if (pointInPolygon(p, room.outline)) return room
   }
   return null
+}
+
+/* -------------------------------------------------------------------- heating */
+
+/** A room's underfloor heating, with everything it does not override taken from the project. */
+export interface ResolvedRoomHeating {
+  enabled: boolean
+  spacing: number
+  roomTempC: number
+  covering: FloorCovering
+  manifoldId: string | null
+}
+
+/**
+ * A room that says nothing about heating is heated on the project's terms.
+ *
+ * That is the right default because it is what a heated house is: the pitch, the flow
+ * temperature and the covering are decided once for the job, and only the rooms that differ
+ * — the tiled bathroom that runs warmer, the terrace that is outside — have to say so.
+ */
+export function heatingOf(project: Project, room: Room): ResolvedRoomHeating {
+  const settings = project.settings.heating
+  const own = room.heating
+  return {
+    enabled: own?.enabled ?? true,
+    spacing: own?.spacing ?? settings.spacing,
+    roomTempC: own?.roomTempC ?? settings.roomTempC,
+    covering: own?.covering ?? settings.covering,
+    manifoldId: own?.manifoldId ?? null,
+  }
 }
 
 /* ------------------------------------------------------------------- fixtures */
@@ -324,9 +355,14 @@ export const servicePointOf = (project: Project, kind: string) =>
 export const servicePointsOf = (project: Project, kind: string): ServicePoint[] =>
   project.servicePoints.filter((s) => s.kind === kind)
 
-/** Whether a kind may be placed more than once. */
+/**
+ * Whether a kind may be placed more than once.
+ *
+ * A heating manifold is the clearest case of all: loops are limited in length, so a storey
+ * is served from its own manifold and a big house has one per floor at least.
+ */
 export const allowsMultiple = (kind: string): boolean =>
-  kind === 'wasteOutlet' || kind === 'electricalPanel'
+  kind === 'wasteOutlet' || kind === 'electricalPanel' || kind === 'heatingManifold'
 
 /** Absolute position of a service point. */
 export const servicePointPosition = (

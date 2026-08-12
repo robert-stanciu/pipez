@@ -16,6 +16,7 @@ import type {
   Project,
   ProjectSettings,
   Room,
+  RoomHeating,
   ServiceKind,
   ServicePoint,
   Wall,
@@ -71,6 +72,40 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     // A town main is normally good for 3 bar at the meter; below that the top floor suffers.
     entryPressureKpa: 300,
   },
+  heating: {
+    // Ø16 PE-RT at 150 is the default underfloor job everywhere, and the pitch a fitter sets
+    // their rail clips out at without being told.
+    pipe: 'pert16',
+    spacing: 150,
+    // 38/30 is a condensing-boiler or heat-pump flow temperature. It is deliberately low:
+    // the whole point of a floor is that it is a big emitter running cool, and at 38 °C a
+    // tiled floor comes to about 28 °C on the surface — just inside the EN 1264-2 ceiling.
+    flowTempC: 38,
+    deltaTK: 8,
+    roomTempC: 20,
+    covering: 'tile',
+    pattern: 'serpentine',
+    screedCover: 45,
+    // Over the ground, which is what EN 1264-4 asks 1,25 m²K/W for — about 45 mm of EPS.
+    insulationR: 1.25,
+  },
+}
+
+/**
+ * A room's heating settings, defaulting to "heated, on the project's terms".
+ *
+ * Every field but `enabled` is null on purpose: a house is laid at one pitch off one flow
+ * temperature, and a room only carries a number of its own where it genuinely differs.
+ */
+export function roomHeating(patch: Partial<RoomHeating> = {}): RoomHeating {
+  return {
+    enabled: true,
+    spacing: null,
+    roomTempC: null,
+    covering: null,
+    manifoldId: null,
+    ...patch,
+  }
 }
 
 export function makeWalls(vertexCount: number): Wall[] {
@@ -148,6 +183,7 @@ export function createShapedRoom(
     floorZ: level.elevation,
     wallThickness: settings.wallThickness,
     walls: makeWalls(ring.length),
+    heating: roomHeating(),
   }
 }
 
@@ -221,6 +257,9 @@ const SERVICE_DEFAULT_Z: Record<ServiceKind, number> = {
   wasteOutlet: -200,
   waterEntry: 500,
   electricalPanel: 1600,
+  // The middle of a recessed manifold cabinet. It has to be above the loops it serves and
+  // low enough that the leaders come up out of the screed without a long climb.
+  heatingManifold: 500,
 }
 
 export function createServicePoint(
@@ -233,6 +272,7 @@ export function createServicePoint(
     waterEntry: 'Water entry',
     wasteOutlet: 'Waste outlet',
     electricalPanel: 'Consumer unit',
+    heatingManifold: 'Heating manifold',
   }
   return {
     id: newId('svc'),
@@ -256,6 +296,7 @@ export function createProject(name = 'Untitled project'): Project {
     drainage: { ...DEFAULT_SETTINGS.drainage },
     electrical: { ...DEFAULT_SETTINGS.electrical },
     supply: { ...DEFAULT_SETTINGS.supply },
+    heating: { ...DEFAULT_SETTINGS.heating },
   }
   return relevel({
     schemaVersion: SCHEMA_VERSION,
@@ -512,6 +553,23 @@ export function sampleProject(): Project {
   onWall('socket', dressing2, 0, 3000)
   freeStanding('ceiling-light', dressing2, 12625, 4800)
 
+  /* ------------------------------------------------------------------ heating */
+
+  /**
+   * The whole house is on underfloor heating except the three outdoor slabs and the plant
+   * room, which has the boiler standing on it.
+   *
+   * The two bathrooms are the only rooms that carry numbers of their own: EN 1264-2 allows a
+   * bathroom floor to reach 33 °C rather than 29, which is worth having when the room itself
+   * is designed at 24 °C and the tiles are what you stand on when you get out of the bath.
+   */
+  for (const room of [terasaLiving, terasaIntrare, terasaE, centrala]) {
+    room.heating = roomHeating({ enabled: false })
+  }
+  for (const room of [baie, baieE]) {
+    room.heating = roomHeating({ roomTempC: 24, spacing: 100, covering: 'tile' })
+  }
+
   /* ----------------------------------------------------------- service points */
 
   // Everything wet arrives and leaves at the north-west corner: the boiler room sits between
@@ -521,10 +579,27 @@ export function sampleProject(): Project {
   // of DN50 that alone is 160 mm of fall before the fixture's own drop.
   const outlet = createServicePoint('wasteOutlet', { x: 3000, y: 9200 }, ground, centrala.id)
   outlet.z = ground.elevation - 450
+  /**
+   * A manifold per storey, both in the circulation space.
+   *
+   * They go in the hall for the same reason the boards do: every room opens off it, so the
+   * leaders are short and they all run in one corridor of screed instead of crossing rooms.
+   * The upstairs one sits over the landing, a couple of metres from the gridline-3 wall the
+   * primary flow and return can rise inside — it is one of the two walls that exist on both
+   * storeys, and the only reason the upper floor can be fed at all.
+   */
+  const manifoldP = createServicePoint('heatingManifold', { x: 6150, y: 5200 }, ground, hol.id)
+  const manifoldE = createServicePoint('heatingManifold', { x: 7000, y: 6400 }, first, holE.id)
+  // Numbered the way the app numbers them when you place a second one yourself. Which storey
+  // each is on is stated wherever they are listed, so it does not belong in the name too.
+  manifoldE.name = 'Heating manifold 2'
+
   project.servicePoints.push(
     outlet,
     createServicePoint('waterEntry', { x: 3600, y: 9700 }, ground, centrala.id),
     createServicePoint('electricalPanel', { x: 4400, y: 6600 }, ground, hol.id),
+    manifoldP,
+    manifoldE,
   )
 
   return relevel(project)
