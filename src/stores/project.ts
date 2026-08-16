@@ -34,6 +34,7 @@ import {
   roomHeating,
   sampleProject,
 } from '../domain/project.ts'
+import { bestManifoldPosition, type ManifoldPlacement } from '../domain/routing/placement.ts'
 import type {
   Fixture,
   FixtureType,
@@ -464,6 +465,31 @@ export const useProjectStore = defineStore('project', () => {
     touch()
   }
 
+  /**
+   * Move a manifold to wherever it costs the least pipe.
+   *
+   * One gesture, one checkpoint: this is a single move as far as undo is concerned, however
+   * far across the plan it lands. Returns what it found, so the caller can say what changed —
+   * or say that nothing did, which is the answer whenever the manifold is already right.
+   */
+  function optimiseManifold(id: string): ManifoldPlacement | null {
+    const service = project.value.servicePoints.find((s) => s.id === id)
+    if (!service || service.kind !== 'heatingManifold') return null
+    const best = bestManifoldPosition(project.value, id)
+    if (!best) return null
+    if (
+      Math.abs(best.position.x - service.position.x) < 1 &&
+      Math.abs(best.position.y - service.position.y) < 1
+    ) {
+      return best
+    }
+    checkpoint()
+    service.position = { ...best.position }
+    service.roomId = best.roomId
+    touch()
+    return best
+  }
+
   function removeServicePoint(id: string): void {
     checkpoint()
     project.value.servicePoints = project.value.servicePoints.filter((s) => s.id !== id)
@@ -524,6 +550,7 @@ export const useProjectStore = defineStore('project', () => {
     placeServicePoint,
     moveServicePointTo,
     updateServicePoint,
+    optimiseManifold,
     removeServicePoint,
     updateSettings,
     updateElectrical,

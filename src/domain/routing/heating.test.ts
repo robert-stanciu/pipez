@@ -19,7 +19,7 @@
 import { describe, expect, test } from 'vitest'
 
 import { area, pointInPolygon } from '../geometry/polygon.ts'
-import { dist2, type Vec2 } from '../geometry/vec.ts'
+import { cross2, dist2, dot2, sub2, type Vec2 } from '../geometry/vec.ts'
 import {
   createFixture,
   createLevel,
@@ -35,14 +35,17 @@ import {
   MAX_LOOPS_PER_MANIFOLD,
   MAX_SURFACE_TEMP,
   maxFlux,
+  peripheralPitch,
   SURFACE_COEFFICIENT,
   ufhPipe,
   upwardFlux,
   WALL_CLEARANCE,
 } from '../standards/en1264.ts'
 import type { HeatingLoop, Project, Segment } from '../types.ts'
+import { servicePointsOf } from '../model.ts'
 import { solve } from './index.ts'
-import { layLoop, splitBands } from './loops.ts'
+import { layLoop, splitBands, type LoopLayout } from './loops.ts'
+import { bestManifoldPosition, costOf, manifoldPlacementCost } from './placement.ts'
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -79,6 +82,45 @@ function scenario(options: {
     createServicePoint('heatingManifold', options.manifoldAt ?? { x: 200, y: 200 }, ground, room.id),
   )
   return relevel(project)
+}
+
+const PERIPHERAL = peripheralPitch(150)
+
+/** One coil in a plain 4 × 3 m room, with the manifold in a corner of it. */
+function rectangularCoil(): LoopLayout {
+  const layout = layLoop({
+    outline: [
+      { x: 0, y: 0 },
+      { x: 4000, y: 0 },
+      { x: 4000, y: 3000 },
+      { x: 0, y: 3000 },
+    ],
+    obstacles: [],
+    spacing: 150,
+    peripheral: PERIPHERAL,
+    clearance: WALL_CLEARANCE,
+    anchor: { x: 100, y: 2900 },
+  })
+  if (!layout) throw new Error('the 4 × 3 m room has to take a coil')
+  return layout
+}
+
+/**
+ * Where the runs of the field sit across the room, in order.
+ *
+ * The runs are the long legs along the room's length; everything else in the path is an end
+ * turn or the perimeter leg. Taken from a room laid out along x, so a run is a leg with the
+ * same y at both ends.
+ */
+function alongRuns(path: LoopLayout['path']): number[] {
+  const offsets: number[] = []
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1]
+    const b = path[i]
+    if (Math.abs(a.y - b.y) > 1 || Math.abs(a.x - b.x) < 1000) continue
+    offsets.push(a.y)
+  }
+  return offsets.sort((l, r) => l - r)
 }
 
 const heatingSegments = (project: Project): Segment[] =>
@@ -242,6 +284,99 @@ describe('coils', () => {
     expect(
       result.warnings.some((w) => w.system === 'heating' && w.message.includes('Room')),
     ).toBe(true)
+  })
+
+  test('the pipe is drawn in against the walls and opens out across the middle', () => {
+    // EN 1264-2's peripheral zone, as pipe rather than as a hotter flow: the runs either side
+    // of the room sit at half the pitch, and the gap left between the wall and the first run
+    // is never wider than the gap between two runs — which is what a bare strip along a wall
+    // is, and it is the one place a floor is felt.
+    const coil = rectangularCoil()
+    const runs = alongRuns(coil.path)
+    expect(runs.length).toBeGreaterThan(8)
+
+    const gaps: number[] = []
+    for (let i = 1; i < runs.length; i++) gaps.push(Math.abs(runs[i] - runs[i - 1]))
+    const middle = gaps[Math.floor(gaps.length / 2)]
+
+    // Two runs at the tight pitch off each wall, and the design pitch in the middle.
+    expect(gaps[0]).toBeCloseTo(PERIPHERAL, -1)
+    expect(gaps[1]).toBeCloseTo(PERIPHERAL, -1)
+    expect(gaps[gaps.length - 1]).toBeCloseTo(PERIPHERAL, -1)
+    expect(gaps[gaps.length - 2]).toBeCloseTo(PERIPHERAL, -1)
+    expect(middle).toBeGreaterThan(PERIPHERAL * 1.5)
+    // And the first pipe of the lot is the perimeter run, hard against its clearance — the
+    // gap left at the wall is the clearance and nothing more.
+    expect(runs[0]).toBeCloseTo(WALL_CLEARANCE, -1)
+  })
+
+  test('nothing in a coil is drawn on the diagonal', () => {
+    // A pipe that leaves a run at an angle is a pipe nobody laid: an installer turns a coil
+    // square across the pitch and then along. Anything longer than a swept corner therefore
+    // has to lie along one of the two axes of a square room.
+    const coil = rectangularCoil()
+    for (let i = 1; i < coil.path.length; i++) {
+      const a = coil.path[i - 1]
+      const b = coil.path[i]
+      const run = dist2(a, b)
+      if (run <= PERIPHERAL) continue
+      const square = Math.abs(a.x - b.x) < 1 || Math.abs(a.y - b.y) < 1
+      expect(square, `${run.toFixed(0)} mm from ${a.x},${a.y} to ${b.x},${b.y} is on the slant`)
+        .toBe(true)
+    }
+  })
+
+  test('every corner is swept, because a coil has no fittings to make one with', () => {
+    // Every change of direction in a coil is the pipe bent round a clip rail, so there is no
+    // such thing as a square corner in one. Drawn as an arc, no single step of it turns far.
+    const coil = rectangularCoil()
+    for (let i = 1; i < coil.path.length - 1; i++) {
+      const into = sub2(coil.path[i], coil.path[i - 1])
+      const outOf = sub2(coil.path[i + 1], coil.path[i])
+      const turn = Math.abs(
+        Math.atan2(cross2(into, outOf), dot2(into, outOf)) * (180 / Math.PI),
+      )
+      expect(turn, `${turn.toFixed(0)}° at ${coil.path[i].x},${coil.path[i].y}`).toBeLessThan(50)
+    }
+  })
+
+  test('the perimeter run comes home the long way, so the far wall gets one too', () => {
+    // Only one of the two ways round the room gets laid — the coil's two ends are fixed at the
+    // manifold and the return leg is the arc between them. Taking the short way would leave
+    // the far half of the room with a single run against its wall where the near half has two,
+    // which is the half of the room furthest from the manifold and the coolest to start with.
+    const coil = rectangularCoil()
+    const along = (fixed: 'x' | 'y', at: number): number => {
+      let total = 0
+      for (let i = 1; i < coil.path.length; i++) {
+        const a = coil.path[i - 1]
+        const b = coil.path[i]
+        if (Math.abs(a[fixed] - at) > 20 || Math.abs(b[fixed] - at) > 20) continue
+        total += dist2(a, b)
+      }
+      return total
+    }
+    // Three of the four walls of a 4 × 3 m room, at the clearance: the near one is where the
+    // two leaders come in, and it is the one the coil cannot get back to.
+    const walls = [
+      along('y', WALL_CLEARANCE),
+      along('y', 3000 - WALL_CLEARANCE),
+      along('x', WALL_CLEARANCE),
+      along('x', 4000 - WALL_CLEARANCE),
+    ].filter((run) => run > 500)
+    expect(walls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  test('no step of a coil is too short to be a length of pipe', () => {
+    // Sweeping the corners is arithmetic, and arithmetic leaves stubs where an arc lands on a
+    // connection. A stub is not laid and not ordered, and in plan a run with no length in it
+    // is drawn as a riser — so a coil full of them comes out peppered with rings.
+    const segments = heatingSegments(sampleProject()).filter((s) => s.role === 'loop')
+    expect(segments.length).toBeGreaterThan(100)
+    for (const segment of segments) {
+      const inPlan = Math.hypot(segment.b.x - segment.a.x, segment.b.y - segment.a.y)
+      expect(inPlan, `${inPlan.toFixed(1)} mm at ${segment.a.x},${segment.a.y}`).toBeGreaterThan(20)
+    }
   })
 
   test('layLoop refuses rather than inventing a token length of pipe', () => {
@@ -425,6 +560,69 @@ describe('loops and manifolds', () => {
     expect(
       result.warnings.some((w) => w.system === 'heating' && w.message.includes('No heat source')),
     ).toBe(true)
+  })
+})
+
+describe('where the manifold goes', () => {
+  test('it lands against a wall, in a room, on its own storey', () => {
+    const project = sampleProject()
+    for (const board of servicePointsOf(project, 'heatingManifold')) {
+      const best = bestManifoldPosition(project, board.id)
+      expect(best, board.name).not.toBeNull()
+      const room = project.rooms.find((r) => r.id === best!.roomId)
+      expect(room, 'a manifold cabinet stands in a room').toBeDefined()
+      expect(room!.levelId).toBe(board.levelId)
+      expect(pointInPolygon(best!.position, room!.outline)).toBe(true)
+      // Recessed into a wall, not standing in the middle of the floor.
+      expect(distanceToEdges(best!.position, room!.outline)).toBeLessThan(WALL_CLEARANCE * 2)
+    }
+  })
+
+  test('nowhere on the storey costs less pipe than where it puts it', () => {
+    const project = sampleProject()
+    const board = servicePointsOf(project, 'heatingManifold')[0]
+    const best = bestManifoldPosition(project, board.id)!
+    // Moving it there and asking again has to come back to the same place: an optimum that
+    // moves when you stand on it is not one, and the button would walk the manifold across
+    // the plan one press at a time.
+    board.position = { ...best.position }
+    board.roomId = best.roomId
+    const again = bestManifoldPosition(project, board.id)!
+    expect(again.position).toEqual(best.position)
+  })
+
+  test('it weighs the leaders against the primary rather than serving only one', () => {
+    // The heat source at one end of the house, the rooms at the other. Sitting on the boiler
+    // is not the answer and neither is ignoring it — the manifold has to come out between the
+    // two, strictly better than both ends on the pipe it costs altogether.
+    const project = sampleProject()
+    const board = servicePointsOf(project, 'heatingManifold')[0]
+    const here = manifoldPlacementCost(project, board)!
+    const best = bestManifoldPosition(project, board.id)!
+    expect(costOf(best)).toBeLessThanOrEqual(costOf(here))
+    expect(best.primaryLength).toBeGreaterThan(0)
+    expect(best.leaderLength).toBeGreaterThan(0)
+  })
+
+  test('moving it there is a change the solver accepts', () => {
+    const project = sampleProject()
+    for (const board of servicePointsOf(project, 'heatingManifold')) {
+      const best = bestManifoldPosition(project, board.id)
+      if (!best) continue
+      board.position = { ...best.position }
+      board.roomId = best.roomId
+    }
+    const result = solve(project)
+    // Every heated room still gets a loop, and nothing about the move is unbuildable.
+    expect(result.loops.length).toBeGreaterThan(0)
+    expect(result.warnings.filter((w) => w.severity === 'error')).toEqual([])
+  })
+
+  test('a storey with nothing heated on it has nowhere to put one', () => {
+    const project = scenario({})
+    project.rooms[0].heating = roomHeating({ enabled: false })
+    const board = servicePointsOf(project, 'heatingManifold')[0]
+    expect(bestManifoldPosition(project, board.id)).toBeNull()
   })
 })
 

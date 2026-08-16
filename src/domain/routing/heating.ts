@@ -51,6 +51,7 @@ import {
   MIN_HEATED_AREA_M2,
   MIN_SCREED_COVER,
   minInsulationResistance,
+  peripheralPitch,
   surfaceLimitFor,
   surfaceTemperature,
   ufhPipe,
@@ -97,6 +98,15 @@ export interface HeatingSolution extends SystemSolution {
 
 /** Distance between the two pipes of a flow-and-return pair, mm. */
 const PAIR_PITCH = 60
+
+/**
+ * How much more pipe a graded coil takes than its area over its design pitch.
+ *
+ * The peripheral runs are laid at half the pitch, so a coil comes out a little tighter than
+ * what was asked for. Only used to decide how many loops a room needs — the loops themselves
+ * are measured off the geometry once they are laid.
+ */
+const PERIPHERAL_ALLOWANCE = 1.15
 
 /** Slab crossings are dear, so the primaries to an upstairs manifold gather onto one riser. */
 const SLAB_CROSSING_WEIGHT = 10
@@ -245,6 +255,7 @@ export function routeHeating(
         extent: band.extent,
         obstacles,
         spacing: settings.spacing,
+        peripheral: peripheralPitch(settings.spacing),
         clearance: WALL_CLEARANCE,
         anchor: board.position,
       })
@@ -616,11 +627,15 @@ function divide(
   leaderEstimate: number,
   maxLoopLength: number,
 ): Band[] {
-  const areaMm2 = polygonArea(outline)
-  const estimate = areaMm2 / spacing + perimeter(outline) + leaderEstimate
+  // Floor area over pitch is the pipe a coil takes, perimeter run and all — that run covers a
+  // strip of floor like any other. A shade more than that, because the runs against the walls
+  // are drawn in tighter than the design pitch and the peripheral zone is pipe too.
+  const estimate = (polygonArea(outline) / spacing) * PERIPHERAL_ALLOWANCE + leaderEstimate
   const count = Math.max(1, Math.ceil(estimate / maxLoopLength))
-  // Grown across each cut by the border the two loops would otherwise both leave there.
-  return splitBands(outline, count, WALL_CLEARANCE + spacing)
+  // Grown across each cut until the two perimeter runs meet at one peripheral pitch — the
+  // most the bands can be grown before they start laying pipe in the same floor.
+  const overlap = Math.max(0, WALL_CLEARANCE - peripheralPitch(spacing) / 2)
+  return splitBands(outline, count, overlap)
 }
 
 /* -------------------------------------------------------------------- the sums */

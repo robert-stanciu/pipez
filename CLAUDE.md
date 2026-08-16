@@ -83,7 +83,31 @@ makes the golden tests meaningful and stops the 3D scene from rebuilding on ever
   called on it. `loops.ts` is pure covering geometry (line field, serpentine, perimeter return)
   and touches no graph at all; `heating.ts` uses the graph only for the leaders and the
   primary. If you change the pattern, the invariants to keep are in `heating.test.ts`: one
-  chain, two ends, no branch, nothing crossing anything.
+  chain, two ends, no branch, nothing crossing anything, no diagonal longer than a swept
+  corner, no step under 25 mm — a shorter one draws as a riser in the plan — and the pitch
+  graded tighter against the walls than through the middle.
+- `placement.ts` — where to stand a manifold, which is a choice rather than a route: it scores
+  wall positions on the leader pipe to every room plus the primary back to the heat source and
+  is driven from the inspector, not from `solve`. It reads the model and returns a position;
+  it does not mutate anything.
+
+### The plant room
+
+`src/domain/plant.ts` designs the heat pump plant from a **finished** solve — `designPlant(project,
+result)` — rather than from inside it. It is post-processing, like `boardLayout.ts` is for the
+board: it needs the manifold duties and the laid pipe, so it cannot run as a sixth solver, and
+it produces a description rather than geometry. Pure, deterministic, no Vue. `standards/heatpump.ts`
+holds the rules it reads (EN 12828 expansion and safety, defrost volume, cylinder coil area,
+Legionella, glycol); keep new rules there rather than inlining constants in `plant.ts`.
+
+The system water content is measured off `result` — every heating segment at its own bore, coil
+and leaders at the UFH pipe's bore and the primary at the supply material's. That number drives
+the buffer, the vessel and the glycol order, so if you change how heating segments are emitted,
+check `plant.test.ts` still balances.
+
+`src/components/plant/` draws it. The schematic's topology is fixed because a heat pump plant's
+topology is fixed; only the number of manifolds varies, one row each. It is not to scale and is
+not the plan — do not try to reconcile the two.
 
 Anything the solver cannot make work becomes a located `RoutingWarning` rather than a
 plausible-looking drawing. Preserve that: never fall back to inventing geometry.
@@ -126,9 +150,10 @@ than trusted. Work autosaves to IndexedDB from `App.vue`, debounced.
 ### Standards
 
 `src/domain/standards/` is deliberately swappable: EN 12056-2 (drainage), EN 806-3 (supply),
-EN 1264-2/-4 (underfloor heating), HD 60364 / RO I7 and DIN 18015-3 (electrical). Sizes
-accumulate towards the root and never reduce downstream. Keep new rules in these modules
-rather than inlining constants in the routers.
+EN 1264-2/-4 (underfloor heating), EN 12828 / EN 1717 (the sealed heat pump plant), and
+HD 60364 / RO I7 with DIN 18015-3 (electrical). Sizes accumulate towards the root and never
+reduce downstream. Keep new rules in these modules rather than inlining constants in the
+routers.
 
 Heating is sized the other way round from everything else: the binding constraint is the
 **surface temperature** people stand on, not the load. `en1264.ts` keeps the three
@@ -171,6 +196,12 @@ It carries a heating manifold on each storey, in the hall. Everything is heated 
 three outdoor slabs and the plant room; the two bathrooms are set to 24 °C at a 100 mm pitch,
 which is the only place the sample overrides the project's heating defaults.
 
+The plant room (`C.T.`) takes the west end of the north wing, on the facade, and the
+ground-floor bathroom sits in the middle of that wing where the plant room used to be. That is
+not cosmetic: an air-to-water monobloc needs an external wall for the line set and the
+condensate, and a floor drain for the safety valve — `plant.test.ts` asserts the sample has
+both, so moving the water heater into an internal room will fail it.
+
 It ships with live warnings on purpose (branches past the EN 12056 unvented limits, hot dead
 legs over the EN 806 limit, a heating loop-length spread the flow meters would struggle with),
 so validation is visible in the UI. Do not "fix" the sample to silence them. Warnings are fine;
@@ -178,4 +209,5 @@ so validation is visible in the UI. Do not "fix" the sample to silence them. War
 
 Two tests are coupled to the sample's contents rather than to invariants and will need
 updating if a room is renamed: `routing.test.ts` looks up `Bucătărie` and the first-floor
-`Baie`, and `panel.test.ts` enumerates the electrical fixture types.
+`Baie`, and `panel.test.ts` enumerates the electrical fixture types. `plant.test.ts` is coupled
+to the sample having a water heater and a floor drain in a room on the facade.

@@ -14,15 +14,16 @@ export type Tool =
   | { kind: 'opening'; opening: 'door' | 'window' }
 
 /** Which workspace fills the middle of the screen. */
-export type Workspace = 'layout' | 'panel' | 'shopping'
+export type Workspace = 'layout' | 'panel' | 'plant' | 'shopping'
 
 export const WORKSPACE_LABEL: Record<Workspace, string> = {
   layout: 'Layout',
   panel: 'Panel',
+  plant: 'Plant',
   shopping: 'Shopping',
 }
 
-export const WORKSPACES: Workspace[] = ['layout', 'panel', 'shopping']
+export const WORKSPACES: Workspace[] = ['layout', 'panel', 'plant', 'shopping']
 
 export const useViewStore = defineStore('view', () => {
   const tool = ref<Tool>({ kind: 'select' })
@@ -34,6 +35,10 @@ export const useViewStore = defineStore('view', () => {
    * The shopping list is the same argument again: it is read away from the drawing, at a
    * counter or in a van, and what it needs is width for the merchant links rather than a
    * corner of a plan.
+   *
+   * And the plant room: a hydraulic schematic is not a scale drawing and never has been. What
+   * it says is what order the water meets things in, which the plan cannot show and which is
+   * the part of a heat pump installation that actually gets built wrong.
    */
   const workspace = ref<Workspace>('layout')
   const setWorkspace = (next: Workspace) => {

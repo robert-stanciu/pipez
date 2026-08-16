@@ -6,6 +6,11 @@ import { fixtureDef } from '../../domain/catalog/fixtures.ts'
 import { wallLength } from '../../domain/edit.ts'
 import { entryOf, heatingOf, wallBehind, wallsOf } from '../../domain/model.ts'
 import {
+  bestManifoldPosition,
+  costOf,
+  manifoldPlacementCost,
+} from '../../domain/routing/placement.ts'
+import {
   COVERING_LABEL,
   COVERING_RESISTANCE,
   SPACINGS,
@@ -110,6 +115,20 @@ const roomLoops = computed(() =>
 const manifold = computed(() =>
   routing.result.manifolds.find((design) => design.id === service.value?.id) ?? null,
 )
+
+/**
+ * What the selected manifold costs in pipe where it stands, and what the best place on the
+ * storey would cost — so the button says what it is worth pressing before it is pressed, and
+ * says nothing more than "it is already there" when it is.
+ */
+const placement = computed(() => {
+  if (service.value?.kind !== 'heatingManifold') return null
+  const here = manifoldPlacementCost(project.value, service.value)
+  const best = bestManifoldPosition(project.value, service.value.id)
+  if (!here || !best) return null
+  const saved = costOf(here) - costOf(best)
+  return { here, best, saved, worthwhile: saved > 500 }
+})
 
 /** The wall a fixture is anchored to, for bounding its slide. */
 const fixtureWallLength = computed(() => {
@@ -571,6 +590,50 @@ const fixtureWallLength = computed(() => {
           Every heated room on this storey is served from its nearest manifold. Move this one
           and the loops are re-drawn from where it lands — the leaders are pipe off the same
           coil, so a manifold in the middle of the plan buys floor area at the far end of it.
+        </p>
+      </PanelSection>
+
+      <!-- Somewhere to stand it: least pipe, counting the leaders to every room and the
+           primary back to the heat source together. -->
+      <PanelSection v-if="placement" title="Placement">
+        <dl class="grid grid-cols-2 gap-y-1 text-[11px]">
+          <dt class="text-ink-400">Leaders</dt>
+          <dd class="numeric text-right text-ink-200">
+            {{ (placement.here.leaderLength / 1000).toFixed(1) }} m
+            <span v-if="placement.worthwhile" class="text-emerald-400">
+              → {{ (placement.best.leaderLength / 1000).toFixed(1) }}
+            </span>
+          </dd>
+          <dt class="text-ink-400">Primary</dt>
+          <dd class="numeric text-right text-ink-200">
+            {{ (placement.here.primaryLength / 1000).toFixed(1) }} m
+            <span v-if="placement.worthwhile" class="text-emerald-400">
+              → {{ (placement.best.primaryLength / 1000).toFixed(1) }}
+            </span>
+          </dd>
+          <dt class="text-ink-400">Rooms served</dt>
+          <dd class="numeric text-right text-ink-200">{{ placement.here.rooms }}</dd>
+        </dl>
+
+        <button
+          type="button"
+          class="mt-3 w-full rounded border border-sky-900/60 bg-sky-950/40 py-1.5 text-sky-200 hover:bg-sky-900/40 disabled:cursor-default disabled:border-ink-800 disabled:bg-transparent disabled:text-ink-500"
+          :disabled="!placement.worthwhile"
+          @click="projectStore.optimiseManifold(service.id)"
+        >
+          {{ placement.worthwhile ? 'Move to the best place' : 'Already in the best place' }}
+        </button>
+        <p class="mt-2 text-[11px] leading-relaxed text-ink-400">
+          <template v-if="placement.worthwhile">
+            Standing it against a wall on this storey where the leaders to every room and the
+            primary back to the heat source come to the least pipe between them — the primary
+            counting for more per metre, because it is the larger pipe and it is insulated.
+            Saves about {{ (placement.saved / 1000).toFixed(0) }} m weighted.
+          </template>
+          <template v-else>
+            Nowhere on this storey takes less pipe than where it already stands, counting the
+            leaders to every room and the primary back to the heat source together.
+          </template>
         </p>
       </PanelSection>
 

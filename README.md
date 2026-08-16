@@ -44,7 +44,8 @@ its load figures; those are what the solver actually connects.
 network starts at one of them. Water comes into a building once, so placing the entry again
 moves it; drainage, boards and manifolds can have several, so placing those again adds one. A
 manifold is what turns underfloor heating on: place one and its storey is heated, in the rooms
-it can reach.
+it can reach — and its inspector will move it to wherever the storey takes the least pipe, if
+you would rather not guess.
 
 The solve then runs automatically, in a worker, debounced behind your edits.
 
@@ -247,6 +248,15 @@ in its inspector — and the loops are drawn from where the manifold lands. Move
 re-drawn: the leaders are pipe off the same coil, so a manifold in the middle of the plan buys
 floor area at the far end of it.
 
+Where the middle of the plan is, is a question with an answer, and the manifold's inspector
+will work it out. It walks the walls of every room on the storey and takes the one where the
+leaders to every room and the primary back to the heat source come to the least pipe between
+them — the primary counting double per metre, because it is the larger pipe and it is
+insulated. Counting it one for one lets a dozen rooms outvote it and the boiler stops
+mattering; counting it much dearer buys the primary back by making every leader in the house
+longer. At double the two tend to move together, and on a plan laid out sensibly the best
+place is short of both rather than a trade of one against the other.
+
 The pattern is a **serpentine with a perimeter return**. The pipe leaves the manifold side of
 the room, meanders across the interior at the design pitch, and comes home round the outside.
 That gets three things at once: both ends finish at the same corner, so the flow and return
@@ -255,8 +265,33 @@ second run along the external wall, where the losses are; and nothing crosses an
 counterflow (bifilar) meander — the obvious alternative, and thermally the better one — cannot
 manage the last of those: its end turns interleave, and on a plan they intersect however they
 are drawn. A room too large for one loop is cut into bands across its long axis, each band
-grown past its share so the two coils meet at the design pitch rather than leaving a cold
-strip down the middle of the floor.
+grown past its share so the two coils meet at the peripheral pitch rather than leaving a cold
+strip down the middle of the floor — and no further than that, because a band's perimeter run
+is its outermost pipe, so two bands that overlap at all overlap there first.
+
+**The pitch is graded, the turns are square, and the corners are bent.** Three things about
+how a coil is set out, each of which is the difference between a drawing and something an
+installer would recognise:
+
+The two runs against each wall are drawn in to half the design pitch and open back out across
+the middle of the room — EN 1264-2's peripheral zone, put in as pipe rather than as a hotter
+flow, because a room loses its heat at its perimeter and the floor has to put it back there.
+The gap between the perimeter run and the first run of the field is that same tight pitch, so
+there is no bare strip along the wall, which is the one place a bare strip is felt underfoot.
+
+A run is entered from the run before it across the pitch and then along it, never on the
+slant; in a square room the two coincide and the turn is the single hop across it looks like
+on any heating drawing, and it is rooms out of square that would otherwise be drawn on the
+diagonal. A line broken by a bath comes back with a piece either side, and the coil takes the
+piece it can reach from the run it is already on rather than the longer one — taking the
+longer one regardless is exactly what sends a pipe across a bath and back again.
+
+And every change of direction is swept at the radius the pipe is actually bent to, half the
+pitch, cut back wherever the legs either side are too short to give it away. A coil has no
+fittings in it at all: every corner in one is the pipe itself bent round a clip rail, so a
+mitred corner is not a simplification of what gets built, it is a drawing of something that
+cannot be. The lengths are measured along the arcs, so the schedule is measured along them
+too.
 
 **The floor is sized by how warm it is allowed to get.** EN 1264-2 caps the mean surface
 temperature at 29 °C in a living space, 33 °C in a bathroom; at 29 °C over a 20 °C room that
@@ -281,6 +316,54 @@ The manifold schedule sits in the Checks column, one block per manifold, and is 
 to the CSV: port, room, length, area, pitch, output, surface temperature against its limit,
 flow, velocity and pressure drop — the sheet the flow meters are actually set from.
 
+## The plant room
+
+The **Plant** workspace is the other end of the heating system: an air-to-water heat pump and
+everything piped to it, as a hydraulic schematic rather than as a plan. It is deliberately not
+to scale. A plant room drawn to scale tells you where the cylinder stands; it does not tell you
+that the dirt separator goes on the return and not the flow, that the vessel hangs off the
+return and not off a pump's discharge, or that the diverter sends *all* of the unit at the
+cylinder rather than sharing it. Those are the things that get built wrong.
+
+Everything on it is derived from the solve, so nothing is typed in twice. Three numbers carry
+the design:
+
+**What the unit has to cover** is the floor's own output at its design flow temperature. This
+is stated on the page as an upper bound and not as an answer, because it is: a floor is laid to
+give more than the room loses, and a heat pump sized on emitter output rather than on a
+calculated heat loss is an oversized heat pump, which spends the winter cycling on and off.
+That is where its efficiency and its compressor both go.
+
+**How much water is in the house** is measured off the pipe the router actually laid — every
+metre of coil, leader and primary at its own bore — rather than off a rule of thumb per square
+metre. It matters because of defrost: every hour or two in damp cold weather the cycle reverses
+and the outdoor coil is thawed with heat pulled back *out* of the system, and if there is not
+enough water to give that heat up the unit trips. Whether a house holds enough turns out to
+depend almost entirely on the **pitch** rather than the floor area — both the water held and
+the heat demanded scale with area, so the area cancels. A floor at 150 mm holds about three
+quarters of what its own defrost wants and needs a volumiser; the same floor at 100 mm holds
+more than all of it and needs nothing. Where more than one manifold is on the plant, that
+volume and the low-loss header are the same vessel doing two jobs, because specifying them
+separately is how a plant room ends up with two of them plumbed in series.
+
+**How big the cylinder coil is** is the specification most often got wrong, and the one that
+separates a heat pump cylinder from a boiler cylinder. A boiler charges a coil at 75 °C against
+50 °C water — 25 K of difference that pushes its output through 1 m² without trying. A heat
+pump charging the same store at 52 °C has perhaps 8 K to work with and needs three times the
+surface. Fit a boiler cylinder and the unit throttles back to whatever the coil will take. The
+store then sits at 48 °C, which is where Legionella is comfortable, so the page also asks for
+the weekly pasteurisation cycle on the immersion and a mixing valve so that temperature never
+reaches a tap.
+
+The rest follows from those: the expansion vessel to EN 12828, charged above the static head to
+the topmost pipe in the house so the top of the system never runs under vacuum; the safety
+group discharging to the plant room's floor drain; the magnetic separator on the return, which
+is the cheapest component in the room and the one whose absence writes off the dearest; the
+glycol a monobloc needs to survive −15 °C, and what it costs in capacity and pump head; and one
+circulator per manifold at the duty the heating solver already worked out for it. Every line
+carries the reason it is there, because a schedule of boxes teaches nobody which of them they
+can leave out.
+
 **What to buy, and where.** The bill of materials is what the design *needs*; the shopping
 list is what you would actually order. It renames every line into the words a Romanian
 merchant's catalogue uses, converts the standards' nominal bores into the sizes on the shelf
@@ -301,6 +384,8 @@ Swappable, in `src/domain/standards/`:
 | Drainage: discharge units, `Qww = K·√ΣDU`, diameters, falls, unvented limits | EN 12056-2, System I |
 | Supply: loading units, diameters, hot dead-leg limit | EN 806-3 |
 | Underfloor heating: surface temperature limits, output, loop hydraulics, screed and insulation | EN 1264-2 / -4 |
+| Sealed heating plant: expansion vessel, safety valve, cold-fill pressure | EN 12828 |
+| Filling a glycol system from the main: backflow protection | EN 1717 |
 | Circuits, cable sizing, volt drop, diversity, installation zones | HD 60364 (RO I7), DIN 18015-3 |
 
 Sizes accumulate towards the root and never reduce downstream. Anything the solver cannot
@@ -323,11 +408,13 @@ it was.
 src/
 ├─ domain/          pure TS: model, geometry, catalogue (fixtures · suppliers), standards, routing
 │  └─ routing/      graph · search · steiner · waste · supply · electrical · heating · loops
-│                   · bends · fittings
+│                   · placement · bends · fittings
+│     plant.ts      the heat pump plant, designed off a finished solve
 ├─ workers/         the solver, off the main thread
 ├─ stores/          pinia: project (with undo) · selection · view · plan · routing
 ├─ three/           the one place mm/z-up becomes m/y-up
-├─ components/      plan2d (SVG) · view3d (TresJS) · panel (the board) · shopping · panels · ui
+├─ components/      plan2d (SVG) · view3d (TresJS) · panel (the board) · plant (the schematic)
+│                   · shopping · panels · ui
 └─ io/              .pipez files · autosave · glTF · CSV
 ```
 
@@ -389,11 +476,39 @@ gaps; the manifold totals what is ported on it and its pump covers the worst loo
 measured with its leaders; the coil ordered adds up to the coil drawn; and no floor goes over
 its surface temperature limit without a warning saying so.
 
+How a coil is *set out* is checked the same way. The pitch grades — two runs at the tight
+pitch off each wall and the design pitch through the middle — and the first pipe of the lot is
+the perimeter run hard against its clearance, so the gap left at the wall is the clearance and
+nothing more. Nothing longer than a swept corner lies on the diagonal in a square room. No
+turn between one step and the next exceeds 50°, which is what says the corners are arcs rather
+than mitres. No step is shorter than 25 mm — rounding leaves stubs wherever an arc lands on a
+connection, and a run with no length in it is drawn in plan as a riser, so a coil full of them
+comes out peppered with rings. And the perimeter run comes home the long way round, which is
+what puts a second run against three of a room's four walls instead of two.
+
+Where the manifold goes is checked too: it lands against a wall, in a room, on its own storey;
+nowhere on the storey costs less pipe than where it puts it; asking again from the answer
+gives the same answer, so the button cannot walk a manifold across the plan one press at a
+time; and the house still solves with no errors once it has moved.
+
 The EN 1264 arithmetic is checked on its own terms too — that the limiting flux over a living
 room comes out at the familiar ~100 W/m², that surface temperature and output stay two
 readings of the same number, that the log mean is used rather than the arithmetic one, that
 carpet costs over half the output, and that opening the pitch out costs far less than
 proportionally.
+
+`src/domain/plant.test.ts` covers the plant room. A schematic is a picture and pictures are
+checked by looking at them; what is checked here is the engineering underneath one, which fails
+in ways a drawing does not show. The fill is measured off the pipe the router actually laid,
+proved against an independent sum of every segment at its own bore, and the fill plus whatever
+buffer is specified always covers what a defrost draws — whether the screed happened to hold
+enough on its own is a property of the house, but that the total is enough is not optional. The
+pitch, not the floor area, is what decides which of those two it is. The cylinder coil scales
+with the unit and never with the cylinder. The vessel is charged above the static head to the
+topmost pipe in the house. A buffer and a low-loss header are one vessel and never two. There
+is one circulator per manifold, at the duty the heating solver worked out for it, with what
+glycol costs in head added. And every part in the schedule carries a reason, in both languages,
+because a list of boxes teaches nobody which of them they can leave out.
 
 `src/three/scene.test.ts` checks the bend geometry itself — that the torus drawn at a corner
 starts exactly where the pipe stops being straight and ends exactly where it resumes, for

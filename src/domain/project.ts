@@ -364,8 +364,12 @@ export function sampleProject(): Project {
 
   /* ------------------------------------------------------------------ parter */
 
-  const baie = rect('Baie', 0, 5900, 1800, 4200, ground)
-  const centrala = rect('C.T.', 2050, 7350, 1950, 2750, ground)
+  // The plant room takes the west end of the north wing, on the facade: an air-to-water heat
+  // pump needs an external wall for the line set to the outdoor unit and for the condensate,
+  // and it needs the floor area a buffer and a cylinder standing side by side take up. The
+  // bathroom goes where the plant room used to be, in the middle of the wing.
+  const centrala = rect('C.T.', 0, 5900, 1800, 4200, ground)
+  const baie = rect('Baie', 2050, 7350, 1950, 2750, ground)
   const scaraP = rect('Casa scării', 4250, 7350, 2000, 2750, ground)
   const holBaie = rect('Hol baie', 2050, 5900, 1950, 1200, ground)
   const birou = rect('Birou', 0, 3050, 4000, 2600, ground)
@@ -440,8 +444,8 @@ export function sampleProject(): Project {
   cut('door', hol, 3, 2740, 900, 2100, 0, birou)
   cut('passage', hol, 1, 4650, 1150, 2400, 0, dining)
   cut('passage', holBaie, 1, 600, 1000, 2100, 0, hol)
-  cut('door', holBaie, 3, 625, 900, 2100, 0, baie)
-  cut('door', centrala, 0, 975, 900, 2100, 0, holBaie)
+  cut('door', holBaie, 3, 625, 900, 2100, 0, centrala)
+  cut('door', baie, 0, 975, 900, 2100, 0, holBaie)
   cut('passage', scaraP, 0, 1000, 1800, 2100, 0, hol)
   cut('passage', living, 2, 2000, 3800, 2400, 0, dining)
   cut('passage', dining, 1, 2100, 4000, 2400, 0, bucatarie)
@@ -449,8 +453,8 @@ export function sampleProject(): Project {
   cut('door', bucatarie, 0, 1925, 1500, 2100, 0, terasaLiving)
 
   // Parter — windows.
-  cut('window', baie, 3, 3495, 1000, 600, 1500)
-  cut('window', centrala, 2, 1020, 600, 600, 1500)
+  cut('window', centrala, 3, 3495, 1000, 600, 1500)
+  cut('window', baie, 2, 1020, 600, 600, 1500)
   cut('window', birou, 0, 2005, 1600, 1600, 500)
   cut('window', living, 0, 1045, 1200, 1600, 700)
   cut('window', living, 0, 2950, 1200, 1600, 800)
@@ -484,18 +488,20 @@ export function sampleProject(): Project {
   }
 
   // Parter — bathroom: tub across the north end, basin west, WC east, as drawn.
-  onWall('bathtub', baie, 2, 900)
-  onWall('basin', baie, 3, 2100)
+  onWall('bathtub', baie, 2, 975)
+  onWall('basin', baie, 3, 1500)
   onWall('wc', baie, 1, 2100)
-  onWall('socket', baie, 3, 1700)
-  freeStanding('ceiling-light', baie, 900, 8000)
+  // Down at the door end, clear of the 600 mm zone 2 that reaches out from the tub.
+  onWall('socket', baie, 3, 2400)
+  freeStanding('ceiling-light', baie, 3025, 8725)
 
-  // Parter — boiler room. The rising main and the hot network both start here.
-  onWall('water-heater', centrala, 3, 700)
-  onWall('washing-machine', centrala, 3, 1600)
-  onWall('socket', centrala, 3, 2200)
-  freeStanding('floor-drain', centrala, 2900, 8500)
-  freeStanding('ceiling-light', centrala, 3025, 8700)
+  // Parter — plant room. The rising main, the hot network and the primary all start here, and
+  // the whole plant stands along the facade wall where the line set comes through it.
+  onWall('water-heater', centrala, 3, 900)
+  onWall('washing-machine', centrala, 3, 1300)
+  onWall('socket', centrala, 3, 2400)
+  freeStanding('floor-drain', centrala, 900, 8500)
+  freeStanding('ceiling-light', centrala, 900, 8000)
 
   // Parter — kitchen: sink under the east window, hob on the north run.
   onWall('sink', bucatarie, 1, 2100)
@@ -572,12 +578,12 @@ export function sampleProject(): Project {
 
   /* ----------------------------------------------------------- service points */
 
-  // Everything wet arrives and leaves at the north-west corner: the boiler room sits between
-  // the bathroom and the kitchen, so that is where the water comes in and where the collector
-  // goes out. The outlet invert is 450 below the floor rather than the 200 a small house gets
-  // away with — the kitchen sink is 12 m of horizontal run away, and at the 1.3% EN 12056 asks
-  // of DN50 that alone is 160 mm of fall before the fixture's own drop.
-  const outlet = createServicePoint('wasteOutlet', { x: 3000, y: 9200 }, ground, centrala.id)
+  // Everything wet arrives and leaves at the north-west corner, which is where the plant room
+  // is: the water comes in there, the collector goes out there, and the heat pump's line set
+  // and condensate go out through the same facade. The outlet invert is 450 below the floor
+  // rather than the 200 a small house gets away with — the kitchen sink is the full width of
+  // the house away, and at the 1.3% EN 12056 asks of DN50 that alone is most of it.
+  const outlet = createServicePoint('wasteOutlet', { x: 900, y: 9200 }, ground, centrala.id)
   outlet.z = ground.elevation - 450
   /**
    * A manifold per storey, both in the circulation space.
@@ -596,7 +602,7 @@ export function sampleProject(): Project {
 
   project.servicePoints.push(
     outlet,
-    createServicePoint('waterEntry', { x: 3600, y: 9700 }, ground, centrala.id),
+    createServicePoint('waterEntry', { x: 1300, y: 9700 }, ground, centrala.id),
     createServicePoint('electricalPanel', { x: 4400, y: 6600 }, ground, hol.id),
     manifoldP,
     manifoldE,

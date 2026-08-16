@@ -351,6 +351,32 @@ export const MAX_LOOP_IMBALANCE = 2
 export const WALL_CLEARANCE = 150
 
 /**
+ * The peripheral zone — EN 1264-2 §4.2.
+ *
+ * A strip along an external wall is allowed to run at 35 °C rather than the 29 °C the occupied
+ * zone is held to, because nobody stands still in it and because that is where the losses are:
+ * a room loses its heat at its perimeter and the floor has to put it back there. The way that
+ * is done is with pipe, not with a hotter flow — the runs are drawn together as they approach
+ * the wall and open back out to the design pitch across the middle of the room.
+ *
+ * A metre is the most EN 1264-2 will call peripheral. Two runs drawn in against each wall is
+ * what fits inside that at any sensible pitch, and is what a floor is actually laid to.
+ */
+export const PERIPHERAL_RUNS = 2
+
+/**
+ * The pitch the outer runs are drawn in to, given the pitch across the rest of the floor.
+ *
+ * Half the design pitch, and never under the pitch the pipe can be bent to — a 16 mm pipe
+ * turned back on itself at 60 mm centres kinks, and a kinked loop is a loop that has to come
+ * out of the screed again.
+ */
+export const MIN_PIPE_PITCH = 75
+
+export const peripheralPitch = (spacing: number): number =>
+  Math.max(MIN_PIPE_PITCH, Math.min(spacing, Math.round(spacing / 2)))
+
+/**
  * Movement joints — EN 1264-4 §4.4.
  *
  * A heated screed grows, and a field bigger than this or longer than this on one side will
