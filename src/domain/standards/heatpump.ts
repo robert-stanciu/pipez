@@ -201,6 +201,155 @@ export function reheatMinutes(litres: number, kw: number): number {
   return joules / (kw * 1000) / 60
 }
 
+/* ------------------------------------------------------------------ how big things are */
+
+/**
+ * What the plant actually measures, mm.
+ *
+ * A plant room is drawn on paper and then has to be walked into, and the thing that goes wrong
+ * is not the hydraulics — it is that the cylinder is 600 across, the door is 700, and nobody
+ * checked. These are the sizes the trade sells at, close enough to set a room out from and
+ * marked as such: confirm against the unit actually bought before anything is built.
+ */
+export interface Bulk {
+  /** Across the wall, and how tall it stands. */
+  widthMm: number
+  heightMm: number
+}
+
+const nearest = <T,>(table: Array<[number, T]>, value: number): T => {
+  for (const [limit, entry] of table) if (value <= limit) return entry
+  return table[table.length - 1][1]
+}
+
+/** A heat pump cylinder, which is taller and fatter than a boiler one of the same volume. */
+export const cylinderBulk = (litres: number): Bulk =>
+  nearest<Bulk>(
+    [
+      [150, { widthMm: 580, heightMm: 1150 }],
+      [200, { widthMm: 580, heightMm: 1400 }],
+      [250, { widthMm: 600, heightMm: 1600 }],
+      [300, { widthMm: 600, heightMm: 1850 }],
+      [400, { widthMm: 650, heightMm: 2000 }],
+      [500, { widthMm: 700, heightMm: 2100 }],
+    ],
+    litres,
+  )
+
+/** A buffer or volumiser standing on the floor. */
+export const bufferBulk = (litres: number): Bulk =>
+  nearest<Bulk>(
+    [
+      [25, { widthMm: 350, heightMm: 520 }],
+      [40, { widthMm: 400, heightMm: 620 }],
+      [50, { widthMm: 400, heightMm: 700 }],
+      [60, { widthMm: 450, heightMm: 720 }],
+      [80, { widthMm: 450, heightMm: 850 }],
+      [100, { widthMm: 500, heightMm: 950 }],
+      [150, { widthMm: 550, heightMm: 1150 }],
+      [200, { widthMm: 600, heightMm: 1250 }],
+      [300, { widthMm: 650, heightMm: 1550 }],
+    ],
+    litres,
+  )
+
+/** A diaphragm expansion vessel, hung off its own bracket. */
+export const vesselBulk = (litres: number): Bulk =>
+  nearest<Bulk>(
+    [
+      [8, { widthMm: 200, heightMm: 300 }],
+      [12, { widthMm: 270, heightMm: 330 }],
+      [18, { widthMm: 280, heightMm: 400 }],
+      [24, { widthMm: 320, heightMm: 430 }],
+      [35, { widthMm: 350, heightMm: 500 }],
+      [50, { widthMm: 400, heightMm: 560 }],
+      [80, { widthMm: 450, heightMm: 660 }],
+      [100, { widthMm: 500, heightMm: 720 }],
+    ],
+    litres,
+  )
+
+/** The outdoor unit, which stands on the other side of the wall from all of it. */
+export const outdoorBulk = (kw: number): Bulk =>
+  nearest<Bulk>(
+    [
+      [8, { widthMm: 1100, heightMm: 800 }],
+      [12, { widthMm: 1140, heightMm: 950 }],
+      [16, { widthMm: 1140, heightMm: 1400 }],
+      [25, { widthMm: 1300, heightMm: 1600 }],
+    ],
+    kw,
+  )
+
+/** Height a monobloc's feet stand above the ground, clear of snow and of its own defrost. */
+export const OUTDOOR_PLINTH_MM = 350
+
+/** Clear space to leave between two things standing against a wall, mm. */
+export const PLANT_GAP_MM = 120
+
+/**
+ * Wall kept clear at the penetration, mm.
+ *
+ * The flow and return come through the wall and turn straight away, and nothing stands in
+ * front of them: a buffer set out over the entry is a buffer that has to come out again the
+ * first time the pipe is touched.
+ */
+export const PENETRATION_ZONE_MM = 600
+
+/**
+ * Where a wall-mounted item belongs, by how high it hangs.
+ *
+ * Two rows, because that is how a plant room is built. Pumps, vessels and the filling loop go
+ * at working height where they are reached and read; separators, safety groups and the gear
+ * that only wants looking at go above them. Splitting them is also what lets the wall carry
+ * the plant at all — strung out in one line, a house's worth of it does not fit on any wall in
+ * a house.
+ */
+export const WORKING_HEIGHT_MM = 1400
+
+/* ------------------------------------------------------- the domestic side of the store */
+
+/**
+ * Relief setting on the cylinder, bar — EN 806-2 / DIN 4753.
+ *
+ * The domestic side of a store is a pressure vessel fed from the main, and it is a different
+ * circuit from the heating one with a different relief: heating is sealed at 3 bar, the store
+ * sits at whatever the main gives it and is relieved at 6, with a temperature-and-pressure
+ * valve as the second line if the thermostat sticks.
+ */
+export const CYLINDER_RELIEF_BAR = 6
+
+/** Pressure the incoming main is reduced to where it arrives above this, bar. */
+export const DHW_INLET_BAR = 3.5
+
+/**
+ * Expansion vessel for the store, litres.
+ *
+ * Water in a cylinder grows as it heats exactly as it does in a heating circuit, and it has
+ * nowhere to go: a check valve on the cold feed — which is there to stop hot water backing
+ * into the cold main — is also what stops the expansion pushing back out of it. Without a
+ * vessel every reheat lifts the relief valve, and a relief valve lifted twice a day fails
+ * open. Sized for the pasteurisation temperature rather than the storage one, because that is
+ * the hottest the store is ever taken.
+ */
+export function dhwVesselLitres(cylinderL: number, inletBar: number): number {
+  const growth = expansionCoefficient(LEGIONELLA_TEMP_C)
+  const final = CYLINDER_RELIEF_BAR - 0.6
+  const usable = (final - inletBar) / (final + 1)
+  if (usable <= 0.05) return Infinity
+  return (cylinderL * growth) / usable
+}
+
+/**
+ * Circulating a hot water system, where the dead legs say it needs it.
+ *
+ * A loop that runs continuously is a permanent heat loss the heat pump has to make up at its
+ * worst efficiency, so it runs on a timer with a return thermostat: on for the hours the house
+ * is awake, and cutting out as soon as the return comes back warm.
+ */
+export const RECIRCULATION_PUMP_W = 10
+export const RECIRCULATION_RETURN_C = 45
+
 /* ---------------------------------------------------------------- the cold outside */
 
 /**

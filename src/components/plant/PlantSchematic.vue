@@ -181,12 +181,12 @@ const litres = (value: number): string => `${Math.round(value)} l`
         coil ≥ {{ design.cylinder.coilM2.toFixed(1) }} m² · store {{ 48 }} °C
       </text>
     </g>
-    <!-- The store's own two pipes, which are not the heating circuit: cold into the bottom
-         where it will not stir the store, hot off the top where the store is hottest. -->
-    <path d="M 388 352 H 340" fill="none" :stroke="COLD" stroke-width="4" />
-    <text x="336" y="348" :fill="COLD" font-size="10" text-anchor="end">cold</text>
-    <path d="M 388 266 H 340" fill="none" :stroke="HOT" stroke-width="4" />
-    <text x="336" y="262" :fill="HOT" font-size="10" text-anchor="end">hot</text>
+    <!-- The store's domestic side is the other drawing: different water, different pressure,
+         different relief, and only the coil in common. -->
+    <path d="M 388 300 H 336" fill="none" :stroke="COLD" stroke-width="4" stroke-dasharray="8 6" />
+    <path d="M 388 266 H 336" fill="none" :stroke="HOT" stroke-width="4" stroke-dasharray="8 6" />
+    <text x="330" y="272" fill="#7c8798" font-size="10" text-anchor="end">domestic side</text>
+    <text x="330" y="286" fill="#7c8798" font-size="10" text-anchor="end">— see below</text>
 
     <!-- ------------------------------------------------------- buffer / low-loss header -->
     <template v-if="vessel">
@@ -211,7 +211,7 @@ const litres = (value: number): string => `${Math.round(value)} l`
     <g v-for="row in layout.rows" :key="row.circuit.id">
       <!-- Down off the header, through the circulator, out to the manifold. -->
       <path
-        :d="`M ${vessel ? 780 : 780} ${FLOW_Y} V ${row.y} H 848`"
+        :d="`M 780 ${FLOW_Y} V ${row.y} H 816`"
         fill="none"
         :stroke="FLOW"
         stroke-width="5"
@@ -223,12 +223,21 @@ const litres = (value: number): string => `${Math.round(value)} l`
         :stroke="FLOW"
         stroke-width="5"
       />
+      <!-- Isolating valve, circulator, check valve: the three things that come as a set,
+           because a pump is what gets changed and a stopped pump is a path backwards. -->
+      <g :transform="`translate(816 ${row.y})`">
+        <path d="M -9 -9 L -9 9 L 0 0 Z M 9 -9 L 9 9 L 0 0 Z" :fill="FLOW" />
+      </g>
       <!-- Circulator: the circle with the flag in it, as it is drawn everywhere. -->
-      <g :transform="`translate(848 ${row.y})`">
+      <g :transform="`translate(852 ${row.y})`">
         <circle cx="0" cy="0" r="16" fill="#11161f" :stroke="FLOW" stroke-width="3" />
         <path d="M -6 -8 L 8 0 L -6 8 Z" :fill="FLOW" />
       </g>
-      <path :d="`M 864 ${row.y} H 934`" fill="none" :stroke="FLOW" stroke-width="5" />
+      <g :transform="`translate(892 ${row.y})`">
+        <path d="M -9 -9 L -9 9 L 0 0 Z M 9 -9 L 9 9 L 0 0 Z" :fill="FLOW" />
+        <line x1="9" y1="-11" x2="9" y2="11" :stroke="FLOW" stroke-width="3" />
+      </g>
+      <path :d="`M 868 ${row.y} H 934`" fill="none" :stroke="FLOW" stroke-width="5" />
 
       <!-- The manifold, as the comb it is. -->
       <g :transform="`translate(934 ${row.y})`">
@@ -290,6 +299,17 @@ const litres = (value: number): string => `${Math.round(value)} l`
     />
     <!-- The store's coil rejoins the return, off the side so the label under it stays legible. -->
     <path :d="`M 516 352 H 552 V ${layout.returnY}`" fill="none" :stroke="RETURN" stroke-width="5" />
+
+    <!-- The low point of the whole circuit, which is where it is emptied from. A glycol fill
+         is pumped in and has to come out again, and it only comes out of the bottom. -->
+    <g :transform="`translate(430 ${layout.returnY})`">
+      <path d="M -10 -9 L 10 -9 L 0 2 Z" :fill="RETURN" />
+      <path d="M -10 15 L 10 15 L 0 4 Z" :fill="RETURN" />
+      <path d="M 0 15 V 26 M -7 26 H 7" :stroke="RETURN" stroke-width="3" fill="none" />
+    </g>
+    <text x="430" :y="layout.returnY + 46" fill="#7c8798" font-size="10" text-anchor="middle">
+      drain
+    </text>
 
     <!-- Dirt separator, on the return and nowhere else: it protects the plate exchanger,
          so it has to be the last thing the water passes before the unit. -->

@@ -474,7 +474,17 @@ export interface RoutingWarning {
   message: string
   position?: Vec3
   fixtureId?: Id
+  /**
+   * A stable name for *what* was found, where something downstream has to act on it rather
+   * than merely show it. The message is written for a person and is free to be rewritten; a
+   * code is not, so anything reading a finding back reads this. Only set where something
+   * does read it — most warnings are for the Checks column and need none.
+   */
+  code?: WarningCode
 }
+
+/** Findings something else in the app reacts to. */
+export type WarningCode = 'hot-dead-leg'
 
 export type Phase = 'L1' | 'L2' | 'L3'
 

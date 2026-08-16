@@ -364,6 +364,35 @@ circulator per manifold at the duty the heating solver already worked out for it
 carries the reason it is there, because a schedule of boxes teaches nobody which of them they
 can leave out.
 
+**The schedule is meant to be built from**, so it carries the parts that are obvious on site and
+invisible on a drawing: the check valve on each circulator, without which a running pump
+circulates heat round a floor nobody asked to warm; the isolating valves either side of it, so
+changing one is twenty minutes rather than a drain-down and a refill with glycol; the fill and
+drain cocks at every low point, because a glycol system is pumped in and has to come out again;
+thermometers on flow and return, whose difference *is* the commissioning check; the high-limit
+stat that drops the circulator if the controls ever fail; and the weather compensation without
+which a heat pump runs at its design flow temperature all season and costs what a boiler does.
+
+**Domestic hot water is drawn as its own circuit**, because it is one — different water,
+different pressure, different relief, and the only thing it shares with the heating side is the
+coil in the cylinder. Drawing them together is how the cold feed's own check valve and the
+store's own expansion vessel get left off, since they look like duplicates of the heating side's
+until you notice they are on the other circuit entirely. Each stop along the cold feed is there
+because of the one before it: the check valve stops stored hot water pushing back into the main,
+and having stopped it the expansion has nowhere to go, so the vessel is not optional, and the
+relief is what covers the vessel failing. Where the hot network's own dead legs exceed what
+EN 806 allows — which the supply solver has already found and flagged — the circulation pump,
+its check valve and its balancing valve appear on the schedule too.
+
+**And the wall is drawn to scale.** The schematics answer what order the water meets things in;
+the elevation answers the question that actually stops a plant room being built, which is
+whether it goes on the wall. It is the wall the heat source is fixed to — the one the flow and
+return cross, so the unit outside is directly behind it and is drawn dashed. Every item is at
+its catalogue size at its real height above the floor, packed from the penetration in the order
+it is plumbed, floor-standing plant along the bottom and everything else in its own band above,
+each carrying the balloon it is numbered by in the schedule. If it does not fit, that is a
+check with a number on it rather than a drawing that quietly overlaps itself.
+
 **What to buy, and where.** The bill of materials is what the design *needs*; the shopping
 list is what you would actually order. It renames every line into the words a Romanian
 merchant's catalogue uses, converts the standards' nominal bores into the sizes on the shelf
@@ -509,6 +538,14 @@ topmost pipe in the house. A buffer and a low-loss header are one vessel and nev
 is one circulator per manifold, at the duty the heating solver worked out for it, with what
 glycol costs in head added. And every part in the schedule carries a reason, in both languages,
 because a list of boxes teaches nobody which of them they can leave out.
+
+The parts most often left off are asserted by name, because the point is that they are there:
+the cold feed's check valve, its expansion vessel and its relief as the set of three they are; a
+check valve and a pair of isolating valves per circulator; the drain cocks and the thermometers.
+The pressure reducing valve appears only where the main is too high for the store, and the
+circulation loop only where the hot network's own dead legs asked for one. The wall is set out
+from the schedule and nothing in a band overlaps anything else in it — and a plant that will not
+fit is reported rather than drawn on top of itself.
 
 `src/three/scene.test.ts` checks the bend geometry itself — that the torus drawn at a corner
 starts exactly where the pipe stops being straight and ends exactly where it resumes, for

@@ -20,6 +20,8 @@ import {
   COIL_M2_PER_KW,
   HEAT_PUMP_SIZES,
   MIN_SYSTEM_VOLUME_L_PER_KW,
+  PENETRATION_ZONE_MM,
+  WORKING_HEIGHT_MM,
 } from './standards/heatpump.ts'
 import type { Project } from './types.ts'
 
@@ -147,6 +149,147 @@ describe('sizing', () => {
     )
     expect(design.vessel.prechargeBar).toBeLessThan(design.vessel.safetyValveBar)
     expect(design.vessel.litres).toBeGreaterThan(0)
+  })
+})
+
+describe('the parts that get left off', () => {
+  // Each of these is a component whose absence does not show on a drawing and shows up two
+  // winters later. They are asserted by name because the point is that they are *present*.
+  const named = (design: ReturnType<typeof plantOf>, fragment: string) =>
+    design.components.find((c) => c.name.toLowerCase().includes(fragment) && c.quantity > 0)
+
+  test('the cold feed carries a check valve, a vessel and a relief', () => {
+    // The three that go together. The check valve stops stored hot water pushing back into the
+    // main; having stopped it, the expansion has nowhere to go, so the vessel is no longer
+    // optional; and the relief is what covers the vessel failing.
+    const design = plantOf(sampleProject())
+    expect(named(design, 'check valve on the cold feed')).toBeDefined()
+    expect(named(design, 'expansion vessel for the store')).toBeDefined()
+    expect(named(design, 'cylinder safety group')).toBeDefined()
+    expect(design.coldFeed.vesselL).toBeGreaterThan(0)
+    expect(design.coldFeed.reliefBar).toBeGreaterThan(design.coldFeed.mainBar)
+  })
+
+  test('a stopped circulator is not a path backwards', () => {
+    const design = plantOf(sampleProject())
+    const checks = named(design, 'check valve on each circulator')
+    expect(checks?.quantity).toBe(design.circuits.length)
+    expect(named(design, 'isolating valves either side')?.quantity).toBe(
+      design.circuits.length * 2,
+    )
+  })
+
+  test('a glycol system can be drained and can be read', () => {
+    const design = plantOf(sampleProject())
+    expect(named(design, 'fill and drain cocks')).toBeDefined()
+    expect(named(design, 'drain cock under the cylinder')).toBeDefined()
+    expect(named(design, 'thermometers')).toBeDefined()
+  })
+
+  test('the pressure reducing valve appears only where the main is too high for the store', () => {
+    const low = sampleProject()
+    low.settings.supply.entryPressureKpa = 300
+    expect(plantOf(low).coldFeed.reducedToBar).toBeNull()
+    expect(named(plantOf(low), 'pressure reducing valve')).toBeUndefined()
+
+    const high = sampleProject()
+    high.settings.supply.entryPressureKpa = 600
+    const design = plantOf(high)
+    expect(design.coldFeed.reducedToBar).not.toBeNull()
+    expect(named(design, 'pressure reducing valve')).toBeDefined()
+    // Reducing the feed also shrinks the vessel, because a vessel only uses the band between
+    // the feed pressure and the relief.
+    expect(design.coldFeed.vesselL).toBeLessThanOrEqual(plantOf(low).coldFeed.vesselL * 2)
+  })
+
+  test('the circulation loop is what the hot network asked for, not a preference', () => {
+    const project = sampleProject()
+    const result = solve(project)
+    const design = designPlant(project, result)
+    const deadLegs = result.warnings.filter((w) => w.code === 'hot-dead-leg').length
+    expect(deadLegs).toBeGreaterThan(0)
+    expect(design.recirculation?.deadLegs).toBe(deadLegs)
+    expect(named(design, 'circulation pump')).toBeDefined()
+    // And its own check valve, without which a draw pulls water backwards round the loop.
+    expect(named(design, 'check valve on the circulation return')).toBeDefined()
+  })
+})
+
+describe('setting the wall out', () => {
+  test('the plant goes on the wall the heat source is fixed to', () => {
+    const project = sampleProject()
+    const design = plantOf(project)
+    const source = project.fixtures.find((f) => f.type === 'water-heater')!
+    expect(design.wall?.index).toBe(source.wallIndex)
+    // In the sample that is the west wall, with the unit on the other side of it.
+    expect(design.wall?.external).toBe(true)
+    expect(design.wall?.lengthMm).toBeGreaterThan(0)
+  })
+
+  test('everything with a footprint is set out, and nothing overlaps', () => {
+    const design = plantOf(sampleProject())
+    expect(design.arrangement.length).toBeGreaterThan(8)
+
+    // Three rows, because that is how a plant room is built: what stands on the floor, what
+    // hangs at working height where it is reached and read, and what goes above that. Within
+    // a row nothing may sit on top of anything else — that is the whole point of setting it
+    // out — and none of it may stand in front of the penetration.
+    const row = (baseMm: number) => (baseMm === 0 ? 0 : baseMm < WORKING_HEIGHT_MM ? 1 : 2)
+    for (const band of [0, 1, 2]) {
+      const inBand = design.arrangement
+        .filter((item) => row(item.mount.baseMm) === band)
+        .sort((a, b) => a.atMm - b.atMm)
+      for (const item of inBand) {
+        expect(item.atMm, `${item.name} stands over the pipe entry`).toBeGreaterThanOrEqual(
+          PENETRATION_ZONE_MM,
+        )
+      }
+      for (let i = 1; i < inBand.length; i++) {
+        const previous = inBand[i - 1]
+        expect(
+          inBand[i].atMm,
+          `${inBand[i].name} runs into ${previous.name}`,
+        ).toBeGreaterThanOrEqual(previous.atMm + previous.mount.widthMm)
+      }
+    }
+  })
+
+  test('the rows are what make it fit — strung out in one line it would not', () => {
+    // The reason the three rows exist. A house's worth of plant laid end to end is longer than
+    // any wall in a house; stacked the way it is actually built, it goes on comfortably.
+    const design = plantOf(sampleProject())
+    const endToEnd = design.arrangement.reduce((sum, item) => sum + item.mount.widthMm, 0)
+    expect(design.wallUsedMm).toBeLessThan(endToEnd)
+    expect(design.wallUsedMm).toBeLessThan(design.wall!.lengthMm)
+  })
+
+  test('what is set out is what is on the schedule, and it is numbered', () => {
+    const design = plantOf(sampleProject())
+    const tags = design.arrangement.map((item) => item.tag)
+    expect(tags).toEqual(tags.map((_, i) => i + 1))
+    for (const item of design.arrangement) {
+      const component = design.components.find((c) => c.id === item.componentId)
+      expect(component, item.name).toBeDefined()
+      expect(component!.quantity).toBeGreaterThan(0)
+      expect(item.mount.widthMm).toBeGreaterThan(0)
+      expect(item.mount.heightMm).toBeGreaterThan(0)
+    }
+  })
+
+  test('a plant that will not go on the wall says so rather than overlapping itself', () => {
+    // The check that stops a plant room being drawn and then not being buildable. Everything
+    // still gets set out — it is just set out past the end of the wall, and reported.
+    const project = sampleProject()
+    const room = project.rooms.find((r) => r.name === 'C.T.')!
+    room.outline = [
+      { x: 0, y: 5900 },
+      { x: 1800, y: 5900 },
+      { x: 1800, y: 7300 },
+      { x: 0, y: 7300 },
+    ]
+    const design = plantOf(project)
+    expect(design.wall!.lengthMm).toBeLessThan(design.wallUsedMm)
+    expect(design.checks.some((c) => c.message.includes('sets out to'))).toBe(true)
   })
 })
 

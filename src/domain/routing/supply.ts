@@ -454,6 +454,9 @@ export function routeSupply(
         message: `${port?.fixtureName ?? 'A fixture'} has ${litres.toFixed(1)} litres of hot water standing in the ${(tree.distToRoot[terminal.node] / 1000).toFixed(1)} m leg feeding it, past the ${MAX_HOT_DEAD_LEG_LITRES} litre dead-leg limit — it will run cold for a while and the standing water is a Legionella risk. Add a circulation loop.`,
         position: port?.position,
         fixtureId: terminal.ref,
+        // The plant room reads this: a dead leg past the limit is what puts a circulation
+        // pump, its check valve and its timer on the schedule.
+        code: 'hot-dead-leg',
       })
     }
   }

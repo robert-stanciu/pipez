@@ -105,9 +105,22 @@ and leaders at the UFH pipe's bore and the primary at the supply material's. Tha
 the buffer, the vessel and the glycol order, so if you change how heating segments are emitted,
 check `plant.test.ts` still balances.
 
-`src/components/plant/` draws it. The schematic's topology is fixed because a heat pump plant's
-topology is fixed; only the number of manifolds varies, one row each. It is not to scale and is
-not the plan — do not try to reconcile the two.
+`src/components/plant/` draws it three ways, and they answer different questions. `PlantElevation`
+is the wall the heat source is fixed to, to scale, and is what the room is set out from — every
+component with a `mount` is packed along it by `setOut` in the domain, so "does it fit" is a
+real check and not a guess. `PlantSchematic` and `WaterSchematic` are the two circuits, and
+their topology is fixed because a heat pump plant's topology is fixed; only the number of
+manifolds varies, one row each. The schematics are not to scale and neither is the plan — do not
+try to reconcile them.
+
+A component that occupies space carries `mount` (size and height off the floor) and gets a
+balloon number; one that is a fitting on a pipe does not. Sizes come from the catalogue tables
+in `standards/heatpump.ts` — they are trade sizes, close enough to set a room out from and
+marked as such.
+
+The circulation loop is driven by `RoutingWarning.code === 'hot-dead-leg'` from the supply
+solver rather than by parsing its message. If you need something else in the app to react to a
+finding, give that finding a code too.
 
 Anything the solver cannot make work becomes a located `RoutingWarning` rather than a
 plausible-looking drawing. Preserve that: never fall back to inventing geometry.

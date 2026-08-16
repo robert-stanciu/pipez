@@ -497,10 +497,14 @@ export function sampleProject(): Project {
 
   // Parter — plant room. The rising main, the hot network and the primary all start here, and
   // the whole plant stands along the facade wall where the line set comes through it.
-  onWall('water-heater', centrala, 3, 900)
-  onWall('washing-machine', centrala, 3, 1300)
-  onWall('socket', centrala, 3, 2400)
-  freeStanding('floor-drain', centrala, 900, 8500)
+  // Everything stands against the west wall, because that is the wall the heat pump is on the
+  // other side of: the flow and return cross it at one point and every component in the room
+  // is on the short run either side of that point. Offsets on wall 3 are measured from its
+  // north end, so 600 is nearest the outside corner and 3600 is down by the door.
+  onWall('water-heater', centrala, 3, 600)
+  onWall('washing-machine', centrala, 3, 3400)
+  onWall('socket', centrala, 3, 2900)
+  freeStanding('floor-drain', centrala, 450, 8400)
   freeStanding('ceiling-light', centrala, 900, 8000)
 
   // Parter — kitchen: sink under the east window, hob on the north run.
@@ -583,7 +587,7 @@ export function sampleProject(): Project {
   // and condensate go out through the same facade. The outlet invert is 450 below the floor
   // rather than the 200 a small house gets away with — the kitchen sink is the full width of
   // the house away, and at the 1.3% EN 12056 asks of DN50 that alone is most of it.
-  const outlet = createServicePoint('wasteOutlet', { x: 900, y: 9200 }, ground, centrala.id)
+  const outlet = createServicePoint('wasteOutlet', { x: 450, y: 9700 }, ground, centrala.id)
   outlet.z = ground.elevation - 450
   /**
    * A manifold per storey, both in the circulation space.
@@ -602,7 +606,7 @@ export function sampleProject(): Project {
 
   project.servicePoints.push(
     outlet,
-    createServicePoint('waterEntry', { x: 1300, y: 9700 }, ground, centrala.id),
+    createServicePoint('waterEntry', { x: 950, y: 9850 }, ground, centrala.id),
     createServicePoint('electricalPanel', { x: 4400, y: 6600 }, ground, hol.id),
     manifoldP,
     manifoldE,

@@ -19,7 +19,9 @@ import { designPlant, type PlantStage } from '../../domain/plant.ts'
 import { DESIGN_OUTDOOR_C } from '../../domain/standards/heatpump.ts'
 import { useProjectStore } from '../../stores/project.ts'
 import { useRoutingStore } from '../../stores/routing.ts'
+import PlantElevation from './PlantElevation.vue'
 import PlantSchematic from './PlantSchematic.vue'
+import WaterSchematic from './WaterSchematic.vue'
 
 const projectStore = useProjectStore()
 const routing = useRoutingStore()
@@ -30,11 +32,14 @@ const STAGE_LABEL: Record<PlantStage, string> = {
   outdoor: 'Outside, and through the wall',
   source: 'At the unit',
   protection: 'Protecting the unit',
-  safety: 'The safety side',
+  safety: 'The sealed side',
   buffer: 'Volume and decoupling',
-  hotwater: 'Hot water',
+  hotwater: 'The store',
+  coldfeed: 'The cold main into the store',
+  recirculation: 'Keeping the taps hot',
   circuit: 'Out to the floors',
-  drain: 'Fill and drain',
+  controls: 'Controls',
+  finishing: 'Filling, draining and finishing',
 }
 
 const STAGE_ORDER: PlantStage[] = [
@@ -44,8 +49,11 @@ const STAGE_ORDER: PlantStage[] = [
   'safety',
   'buffer',
   'hotwater',
+  'coldfeed',
+  'recirculation',
   'circuit',
-  'drain',
+  'controls',
+  'finishing',
 ]
 
 /** The schedule, grouped the way the water meets it. */
@@ -56,6 +64,10 @@ const groups = computed(() =>
     items: design.value.components.filter((component) => component.stage === stage),
   })).filter((group) => group.items.length > 0),
 )
+
+/** The balloon this component carries on the elevation, where it has one. */
+const tagOf = (componentId: string): number | null =>
+  design.value.arrangement.find((item) => item.componentId === componentId)?.tag ?? null
 
 const severityClass = (severity: string): string =>
   severity === 'error'
@@ -139,9 +151,40 @@ const severityClass = (severity: string): string =>
       </div>
     </div>
 
-    <!-- The schematic. -->
+    <!-- The wall first, because it is the drawing you set out from. -->
+    <div v-if="design.wall" class="border-b border-ink-800 bg-ink-900 px-4 py-4">
+      <h2 class="mb-1 text-[11px] font-semibold tracking-wide text-ink-300 uppercase">
+        The plant wall, to scale
+      </h2>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        Looking at the wall the heat source is fixed to, from inside the room. Everything is at
+        its catalogue size at its real height, and the numbers are the ones in the schedule
+        below. Confirm the sizes against the units actually bought before anything is built.
+      </p>
+      <PlantElevation :design="design" />
+    </div>
+
+    <!-- Two schematics, because they are two circuits. The heating side is sealed, glycol
+         filled and relieved at 3 bar; the domestic side is the main, potable and relieved at
+         6. All they share is the coil in the cylinder. -->
     <div class="border-b border-ink-800 bg-ink-900 px-4 py-4">
+      <h2 class="mb-1 text-[11px] font-semibold tracking-wide text-ink-300 uppercase">
+        Source and heating
+      </h2>
       <PlantSchematic :design="design" />
+    </div>
+
+    <div class="border-b border-ink-800 bg-ink-900 px-4 py-4">
+      <h2 class="mb-1 text-[11px] font-semibold tracking-wide text-ink-300 uppercase">
+        Domestic hot water
+      </h2>
+      <p class="mb-2 text-[11px] leading-relaxed text-ink-400">
+        The other circuit. Each stop along the cold feed is there because of the one before it:
+        the check valve stops stored hot water pushing back into the main, and having stopped
+        it, the expansion has nowhere to go — so the vessel is not optional, and the relief is
+        what covers the vessel failing.
+      </p>
+      <WaterSchematic :design="design" />
     </div>
 
     <div class="flex min-h-0 flex-1 flex-col gap-4 px-4 py-4 xl:flex-row">
@@ -162,6 +205,11 @@ const severityClass = (severity: string): string =>
           >
             <div class="flex flex-wrap items-baseline justify-between gap-x-3">
               <span class="text-[13px] text-ink-100">
+                <span
+                  v-if="tagOf(item.id)"
+                  class="numeric mr-1 inline-flex h-4 w-4 items-center justify-center rounded-full border border-heating text-[9px] text-heating"
+                  >{{ tagOf(item.id) }}</span
+                >
                 <span v-if="item.quantity > 1" class="numeric text-ink-400">
                   {{ item.quantity }}× </span
                 >{{ item.name }}
