@@ -122,6 +122,38 @@ The circulation loop is driven by `RoutingWarning.code === 'hot-dead-leg'` from 
 solver rather than by parsing its message. If you need something else in the app to react to a
 finding, give that finding a code too.
 
+### The scaffold
+
+`src/domain/scaffold.ts` designs the façade scaffold from the project alone — `designScaffold(project)`.
+It is the only utility that needs no solve at all: it is about the *outside* of the building, and
+the router never goes there. Pure, deterministic, no Vue. `standards/scaffold.ts` holds the kit
+and the rules (SR EN 12810/12811 load and width classes, bays, lifts, guarding, tie grid, and the
+two systems a Romanian yard hires); keep new rules there rather than inlining constants.
+
+The whole module rests on one derivation, and it is the one to be careful with: **a façade is the
+boundary of the union of a storey's room envelopes**, not the perimeter of anything. It is found
+without building the union — each room's outer-face edge is probed just outside itself, the parts
+with another room behind them are subtracted as intervals, and what is left is grouped onto its
+supporting line. Runs are then the *elementary intervals* of those lines across storeys, so a run
+stops wherever the set of storeys over it changes. That last point is load-bearing: merging two
+intervals because they happen to be the same height, when one has the ground floor under it and
+the other does not, silently puts a scaffold on the ground that has to stand on a terrace roof.
+
+`ScaffoldRun.lengthMm` is what has to be covered (façade plus the corner return) and
+`builtLengthMm` is what the bays come to. Everything hired, drawn or billed uses the built
+length; `packBays` will fall up to `BAY_TOLERANCE_MM` short rather than add a whole bay for the
+last hand's width. A corner is charged to exactly one of the two runs that meet at it, so the
+run lengths still sum to the perimeter plus one return per corner.
+
+`src/components/scaffold/` draws it twice and they answer different questions. `ScaffoldPlan` is
+the ground each run occupies — the question a schedule cannot answer is whether it fits on the
+plot. `ScaffoldElevation` is one run against its wall, and every elevation on the page shares one
+scale so two façades can be compared by looking at them. Neither is a schematic; both are to
+scale.
+
+`ProjectSettings.scaffold` is optional and read through `scaffoldSettingsOf(project)`, which also
+snaps the deck to a width the chosen kit is made in — do not reach into it directly.
+
 Anything the solver cannot make work becomes a located `RoutingWarning` rather than a
 plausible-looking drawing. Preserve that: never fall back to inventing geometry.
 
@@ -138,7 +170,8 @@ plausible-looking drawing. Preserve that: never fall back to inventing geometry.
 - `plan.ts` — camera, snapping, and the drag state machine, which lives in the store because
   the shapes that start a drag are separate components.
 - `view.ts` — active tool, system visibility, active storey (`null` resolves to ground floor in
-  the plan store), and which workspace fills the middle of the screen.
+  the plan store), and which workspace fills the middle of the screen. A new workspace means an
+  entry in `Workspace`, `WORKSPACE_LABEL`, `WORKSPACES` and a branch in `App.vue` — all four.
 
 ### Derived fields that must be recomputed
 
@@ -157,14 +190,18 @@ read them constantly. They can go stale:
 
 Changing the model means changing three things together: the type in `domain/types.ts`, the
 zod schema in `io/projectFile.ts`, and — if old files would no longer load — `SCHEMA_VERSION`
-in `domain/project.ts` (currently 2) plus its migration. Files are validated on load rather
-than trusted. Work autosaves to IndexedDB from `App.vue`, debounced.
+in `domain/project.ts` (currently 2) plus its migration. A new *optional* settings group needs
+no bump — `ProjectSettings.scaffold` is the worked example: optional in the type, defaulted in
+the zod schema and merged in its transform, so a file written before it loads as the house it
+always was. Files are validated on load rather than trusted. Work autosaves to IndexedDB from
+`App.vue`, debounced.
 
 ### Standards
 
 `src/domain/standards/` is deliberately swappable: EN 12056-2 (drainage), EN 806-3 (supply),
-EN 1264-2/-4 (underfloor heating), EN 12828 / EN 1717 (the sealed heat pump plant), and
-HD 60364 / RO I7 with DIN 18015-3 (electrical). Sizes accumulate towards the root and never
+EN 1264-2/-4 (underfloor heating), EN 12828 / EN 1717 (the sealed heat pump plant),
+HD 60364 / RO I7 with DIN 18015-3 (electrical), and SR EN 12810/12811 with HG 300/2006 and
+HG 1146/2006 (the façade scaffold). Sizes accumulate towards the root and never
 reduce downstream. Keep new rules in these modules rather than inlining constants in the
 routers.
 
@@ -194,6 +231,12 @@ not by counting loose ends), diameters never reduce towards the root, trunks are
 shared, no drainage turn is sharper than 45°, unreachable fixtures are reported by name, and
 the solve is deterministic. Add cases in that style; a test pinned to coordinates will break
 on any legitimate improvement to the router.
+
+`src/domain/scaffold.test.ts` works the same way and for the same reason: the façades are
+asserted against buildings whose outside face can be worked out on paper — one room, two rooms
+sharing a wall, an L, a storey set back over another — rather than against coordinates. A test
+that pins a run to a position will break on any legitimate improvement to how the union boundary
+is found.
 
 `src/three/scene.test.ts` checks bend geometry — that a torus starts exactly where the pipe
 stops being straight and ends where it resumes — because a mis-oriented bend still looks like

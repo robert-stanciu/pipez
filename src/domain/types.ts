@@ -356,6 +356,53 @@ export interface HeatingSettings {
   insulationR: number
 }
 
+/**
+ * Which kit the façade scaffold is hired in.
+ *
+ * `italian` is the welded 2,00 × 1,00 m frame with a fixed 2,00 m bay — the yard scaffold, and
+ * what stands outside most Romanian houses being rendered. `facade-frame` is the system
+ * scaffold certified to SR EN 12810, which comes in bays from 0,73 to 3,07 m and therefore
+ * lands on an awkward wall without a filler.
+ */
+export type ScaffoldSystemId = 'italian' | 'facade-frame'
+
+/**
+ * How the façades are to be scaffolded.
+ *
+ * These are hire decisions rather than design ones — what kit, how wide a deck, how long it
+ * stands there — but they belong to the project because they decide what is on the order, and
+ * because the next person to open the file should see the scaffold that was actually hired
+ * rather than the defaults.
+ */
+export interface ScaffoldSettings {
+  system: ScaffoldSystemId
+  /** Deck depth, mm. Resolved to the nearest width the chosen kit is made in. */
+  deckWidth: number
+  /** SR EN 12811-1 load class — what the deck may carry, which is what it may be used for. */
+  loadClass: 2 | 3 | 4
+  /** Gap between the deck edge and the wall face, mm. Over 300 the inside needs guarding too. */
+  wallGap: number
+  /**
+   * How far above the top slab the work reaches, mm — the eaves board, the gutter, the
+   * cornice. It is what makes the difference between a scaffold you can finish a roof edge
+   * from and one you have to add a lift to on the day.
+   */
+  roofRise: number
+  /** How long it stands there, months — the hire is priced by the month. */
+  months: number
+  /** Quoted hire rate, lei per m² of façade per month. Null until there is a quote. */
+  ratePerM2Month: number | null
+  /**
+   * Deck every lift, or deck the top two and move them up as the work rises.
+   *
+   * The second is a real economy — decks are a third of the weight and a good share of the
+   * hire — and a real nuisance, because moving them is a working-at-height job of its own.
+   */
+  deckEveryLift: boolean
+  /** Protective netting over the outer face. It also doubles the wind load, so it doubles ties. */
+  netting: boolean
+}
+
 export interface ProjectSettings {
   /** Defaults applied to newly created rooms and walls. */
   wallThickness: number
@@ -375,6 +422,12 @@ export interface ProjectSettings {
   drainage: DrainageSettings
   supply: SupplySettings
   heating: HeatingSettings
+  /**
+   * Added after the first release, and optional for the same reason room heating is: a file
+   * written before scaffolding existed simply gets the defaults, and the defaults are what
+   * that house would have been scaffolded with anyway.
+   */
+  scaffold?: ScaffoldSettings
 }
 
 export interface Project {

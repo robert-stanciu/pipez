@@ -7,6 +7,7 @@ import { fixtureDef } from './catalog/fixtures.ts'
 import { ensureCounterClockwise, rectangle } from './geometry/polygon.ts'
 import type { Vec2 } from './geometry/vec.ts'
 import { newId } from './ids.ts'
+import { DEFAULT_SCAFFOLD } from './standards/scaffold.ts'
 import type {
   Level,
   Fixture,
@@ -89,6 +90,9 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     // Over the ground, which is what EN 1264-4 asks 1,25 m²K/W for — about 45 mm of EPS.
     insulationR: 1.25,
   },
+  // The yard scaffold on a two-month hire — see `standards/scaffold.ts` for why each of those
+  // is what a render or an insulation job on a house actually books.
+  scaffold: { ...DEFAULT_SCAFFOLD },
 }
 
 /**
@@ -297,6 +301,7 @@ export function createProject(name = 'Untitled project'): Project {
     electrical: { ...DEFAULT_SETTINGS.electrical },
     supply: { ...DEFAULT_SETTINGS.supply },
     heating: { ...DEFAULT_SETTINGS.heating },
+    scaffold: { ...DEFAULT_SCAFFOLD },
   }
   return relevel({
     schemaVersion: SCHEMA_VERSION,

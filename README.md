@@ -404,6 +404,56 @@ search link to Dedeman, Hornbach, Leroy Merlin, Brico Dépôt and Romstal, built
 Romanian search terms shown beside it. They are searches, not deep product links: a search
 resolves, and an invented SKU does not.
 
+## The scaffold
+
+The **Scaffold** workspace is the one drawing in the app that is about the *outside* of the
+building: the façade scaffold that has to stand there before anything can be rendered,
+insulated, guttered or painted, and what that is to hire.
+
+It is the item on a house job most often priced off a guess — perimeter × height, ring a yard —
+and the guess is wrong in a specific way. **A façade is not the perimeter.** A plan is a pile of
+rooms; a façade is the outside of their *union*, a shape nobody has drawn. So it is found rather
+than assumed: the outer face of every room is taken, the parts of it with another room on the
+far side are cut away, and what survives is grouped onto the straight lines it lies on. Those
+lines are the runs, and because they are found per storey, a house with a set-back upper floor
+comes out as what it is — some runs standing in the garden and going all the way up, and some
+standing on the terrace roof of the storey below. On the sample house two of the twelve runs do
+not reach the ground, which is the fact that turns up on the day the lorry arrives if nobody
+looked for it. Those get a warning, because a base plate on a terrace is a point load on a slab
+and a hole through its waterproofing, and both are somebody's decision rather than the fitter's.
+
+**Then it is a kit-of-parts problem**, because a wall is continuous and a scaffold is not. Both
+systems a Romanian yard hires stack in 2,00 m frames: the *schelă tip italian* — a welded
+2,00 × 1,00 m frame on a fixed 2,00 m bay set by its own cross braces, which is what stands
+outside most houses in the country — and the system scaffold to SR EN 12810, whose bays run
+from 0,73 to 3,07 m and which therefore lands on an awkward wall without a filler and needs a
+third fewer frames on a long one. Switching between them on the sample moves the order from 96
+frames to 79. The length of each run becomes a count of bays, the height a count of lifts, and
+the two together the frames, decks, braces, guardrails, toe boards and ties.
+
+**The height is decided by the work, not by the building.** The top deck has to be within arm's
+reach of the top of the work and must not be above it: you cannot render a wall you are standing
+level with, and you cannot render one two and a half metres over your head. The top of the work
+is the last slab plus whatever the eaves, the gutter and the cornice add — one project setting,
+because it is the number that otherwise gets found out on the day and costs a whole extra lift.
+
+Each run is drawn as an elevation, all at one scale so two façades can be compared by looking at
+them: frames where they land, a deck at every lift that carries one, both rails and the toe
+board on each, and the ties in amber on the grid they were counted to. Ties are the item that
+gets left out, and they are the item that matters — braces stop a scaffold racking, the wall is
+what stops it falling away from the house — so they are drawn rather than merely totalled, and
+netting doubles them, because netting turns the outer face into a sail. The plan drawing answers
+the other question a schedule cannot: the band of ground each run occupies, gap plus deck,
+which on a tight Romanian plot is the measurement to take *before* the hire is booked.
+
+The schedule is in the words a yard uses — *cadre*, *diagonale*, *podine*, *balustrade*,
+*borduri*, *ancore cu dibluri* — with the reason each line exists next to the quantity, and
+**Copy enquiry** puts the whole thing on the clipboard as a Romanian request for a quote: the
+runs with their sizes, the piece count, the weight and the number of loads, and the ask that
+transport, erection, striking and the inspection tag be priced in. Hire itself is quoted per
+square metre of façade per month, so the area is computed and the rate is left blank until
+there is a real one to type in — a number you cannot explain is a number you cannot check.
+
 ### Standards
 
 Swappable, in `src/domain/standards/`:
@@ -416,6 +466,8 @@ Swappable, in `src/domain/standards/`:
 | Sealed heating plant: expansion vessel, safety valve, cold-fill pressure | EN 12828 |
 | Filling a glycol system from the main: backflow protection | EN 1717 |
 | Circuits, cable sizing, volt drop, diversity, installation zones | HD 60364 (RO I7), DIN 18015-3 |
+| Façade scaffold: load and width classes, bays, guarding, ties | SR EN 12811-1, SR EN 12810-1/-2 |
+| Scaffold on site: who erects it, who checks it and when | HG 300/2006, HG 1146/2006 |
 
 Sizes accumulate towards the root and never reduce downstream. Anything the solver cannot
 make work becomes a located warning in the Checks panel rather than a plausible-looking
@@ -439,11 +491,12 @@ src/
 │  └─ routing/      graph · search · steiner · waste · supply · electrical · heating · loops
 │                   · placement · bends · fittings
 │     plant.ts      the heat pump plant, designed off a finished solve
+│     scaffold.ts   the façade scaffold, found off the outside of the storeys
 ├─ workers/         the solver, off the main thread
 ├─ stores/          pinia: project (with undo) · selection · view · plan · routing
 ├─ three/           the one place mm/z-up becomes m/y-up
 ├─ components/      plan2d (SVG) · view3d (TresJS) · panel (the board) · plant (the schematic)
-│                   · shopping · panels · ui
+│                   · scaffold (the façades) · shopping · panels · ui
 └─ io/              .pipez files · autosave · glTF · CSV
 ```
 
@@ -546,6 +599,21 @@ The pressure reducing valve appears only where the main is too high for the stor
 circulation loop only where the hot network's own dead legs asked for one. The wall is set out
 from the schedule and nothing in a band overlaps anything else in it — and a plant that will not
 fit is reported rather than drawn on top of itself.
+
+`src/domain/scaffold.test.ts` covers the façade scaffold, and what it covers first is the
+geometry — a façade found even slightly wrong prices a scaffold round a wall that is inside the
+house. So the cases are buildings whose outside face can be worked out on paper: one room comes
+out as four runs adding up to its *outer* perimeter, a wall shared with a neighbour is not a
+façade at all and the run stays continuous across both rooms, and an L comes out as six runs
+still adding up to the outside of the L. On the sample, every top deck is within reach of the
+top of the work and none of them stands above it, a storey set back over the one below is
+scaffolded off the roof it sits on and says so, and the run on the wall that exists on both
+storeys is one run from the ground rather than two stacked. Beyond that: the bays cover each run
+give or take the hand's width at the corner that is not worth another bay, and whichever way it
+lands the difference is on the drawing; the deck is snapped to a width the chosen kit is
+actually made in; the hire is priced only once there is a rate to price it at; the enquiry names
+every run and every part; and the whole design is deterministic and independent of the order the
+rooms were drawn in.
 
 `src/three/scene.test.ts` checks the bend geometry itself — that the torus drawn at a corner
 starts exactly where the pipe stops being straight and ends exactly where it resumes, for

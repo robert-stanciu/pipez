@@ -10,6 +10,7 @@
 import { z } from 'zod'
 
 import { DEFAULT_SETTINGS, SCHEMA_VERSION } from '../domain/project.ts'
+import { DEFAULT_SCAFFOLD } from '../domain/standards/scaffold.ts'
 import type { Project } from '../domain/types.ts'
 
 const vec2 = z.object({ x: z.number(), y: z.number() })
@@ -170,6 +171,21 @@ const settings = z.object({
       screedCover: 45,
       insulationR: 1.25,
     }),
+  // Added with the scaffold schedule. A file written before it is a house nobody has priced a
+  // scaffold for yet, so it simply gets the hire everybody books.
+  scaffold: z
+    .object({
+      system: z.enum(['italian', 'facade-frame']).default('italian'),
+      deckWidth: z.number().positive().default(1000),
+      loadClass: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(3),
+      wallGap: z.number().nonnegative().default(300),
+      roofRise: z.number().nonnegative().default(500),
+      months: z.number().positive().default(2),
+      ratePerM2Month: z.number().nonnegative().nullable().default(null),
+      deckEveryLift: z.boolean().default(true),
+      netting: z.boolean().default(true),
+    })
+    .default(DEFAULT_SCAFFOLD),
 })
 
 export const projectSchema = z.object({
@@ -185,6 +201,7 @@ export const projectSchema = z.object({
     electrical: { ...DEFAULT_SETTINGS.electrical, ...(partial.electrical ?? {}) },
     supply: { ...DEFAULT_SETTINGS.supply, ...(partial.supply ?? {}) },
     heating: { ...DEFAULT_SETTINGS.heating, ...(partial.heating ?? {}) },
+    scaffold: { ...DEFAULT_SCAFFOLD, ...(partial.scaffold ?? {}) },
   })),
   levels: z.array(level).min(1),
   rooms: z.array(room),

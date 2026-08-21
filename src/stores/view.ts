@@ -14,16 +14,17 @@ export type Tool =
   | { kind: 'opening'; opening: 'door' | 'window' }
 
 /** Which workspace fills the middle of the screen. */
-export type Workspace = 'layout' | 'panel' | 'plant' | 'shopping'
+export type Workspace = 'layout' | 'panel' | 'plant' | 'scaffold' | 'shopping'
 
 export const WORKSPACE_LABEL: Record<Workspace, string> = {
   layout: 'Layout',
   panel: 'Panel',
   plant: 'Plant',
+  scaffold: 'Scaffold',
   shopping: 'Shopping',
 }
 
-export const WORKSPACES: Workspace[] = ['layout', 'panel', 'plant', 'shopping']
+export const WORKSPACES: Workspace[] = ['layout', 'panel', 'plant', 'scaffold', 'shopping']
 
 export const useViewStore = defineStore('view', () => {
   const tool = ref<Tool>({ kind: 'select' })
@@ -39,6 +40,10 @@ export const useViewStore = defineStore('view', () => {
    * And the plant room: a hydraulic schematic is not a scale drawing and never has been. What
    * it says is what order the water meets things in, which the plan cannot show and which is
    * the part of a heat pump installation that actually gets built wrong.
+   *
+   * The scaffold is the one drawing that is about the *outside* of the building, and it is read
+   * as elevations — one per façade, which is a stack of pictures the plan has no room for and
+   * no business holding.
    */
   const workspace = ref<Workspace>('layout')
   const setWorkspace = (next: Workspace) => {
